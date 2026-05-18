@@ -1,41 +1,31 @@
 # iphone-bridge
 
-Turn your iPhone (and any headphones connected to it — AirPods, wired, whatever) into a Windows headset, over your local network.
+Use your iPhone (and any headphones connected to it — AirPods, wired, etc.) as a Windows headset over your local network.
 
-Windows app captures your PC's audio output and serves it to a tiny web page in Safari on the iPhone. The same page captures the iPhone's mic and sends it back to a virtual mic on Windows. Both directions run independently — audio out and mic in are separate toggles, both can be on at the same time.
+## What it does
 
-## Why
-
-If you want to use your AirPods (or any iPhone audio gear) as a real Windows headset for calls, games, music, dictation, etc., without paying for proprietary "phone-as-mic" apps and without dealing with Bluetooth pairing on the PC. The audio path goes PC → Wi-Fi → iPhone → AirPods, and the mic path goes AirPods → iPhone → Wi-Fi → PC.
-
-## How it works
-
-- **Rust server (Windows)** — captures system audio via WASAPI loopback, serves an HTTPS page + WebSocket on port 8443. Receives mic audio back over WebSocket and writes it into the VB-CABLE virtual input device, which any Windows app can then select as its microphone.
-- **Web client (iPhone Safari)** — plays the streamed audio through Web Audio, captures the mic via `getUserMedia`, sends it back over the same WebSocket.
-- **TLS** — required because `getUserMedia` doesn't work on non-HTTPS origins. The app auto-generates a self-signed cert; if Tailscale is installed, it'll use the Tailscale-issued Let's Encrypt cert for your machine's `*.ts.net` hostname instead so Safari trusts it without warnings.
+- Streams your PC's audio output to a web page on the iPhone (you hear it through whatever's plugged into the phone).
+- Streams the iPhone's microphone back to Windows as a virtual mic that any app (Discord, Zoom, games, etc.) can select.
+- Both directions are independent — you can run just audio, just mic, or both at once.
 
 ## Requirements
 
-- Windows 10/11
-- [VB-CABLE](https://vb-audio.com/Cable/) installed (free virtual audio driver). The bridge writes the mic stream into the VB-CABLE Input device; any Windows app picks it up by selecting "CABLE Output" as its microphone.
-- Rust toolchain to build (`cargo build --release`)
-- iPhone on the same Wi-Fi network, or both devices on Tailscale
+- Windows 10 or 11
+- [VB-CABLE](https://vb-audio.com/Cable/) installed (free virtual audio driver — used as the destination for the mic stream)
+- Rust toolchain ([rustup](https://rustup.rs/))
+- An iPhone on the same Wi-Fi as the PC
 
-## Build & run
+## Run it
 
 ```
 cargo build --release
 .\target\release\iphone-bridge.exe
 ```
 
-On launch the console prints a URL like `https://<your-machine>:8443`. Open it in Safari on the iPhone, accept the self-signed cert if prompted, then hit the audio and/or mic toggles.
+The console prints a URL like `https://<your-pc>:8443`. Open it in Safari on the iPhone, accept the self-signed certificate, and tap the audio / mic buttons.
 
-For best results: add Safari to the home screen as a web app (Share → Add to Home Screen). It keeps the screen alive and runs without the URL bar.
-
-## Status
-
-Personal project, "works on my machine" tier. Built for a specific setup (Windows + iPhone + AirPods + Tailscale + VB-CABLE). Feel free to fork and adapt.
+In Windows sound settings, select **CABLE Output** as the microphone for whatever app you want to use the iPhone mic in.
 
 ## License
 
-[AGPL-3.0-or-later](LICENSE). You're free to use, modify, and redistribute this — including running it as a network service — as long as anyone you give it to (or who uses it over a network) gets the same freedoms with your changes.
+[AGPL-3.0-or-later](LICENSE).
