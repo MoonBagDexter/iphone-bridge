@@ -184,6 +184,8 @@
     .nav-btn-btw { color: #fbbf24; border-color: #78350f; }
     .nav-btn-push { color: #60a5fa; border-color: #1e3a8a; }
     .nav-btn-switch { color: #2dd4bf; border-color: #134e4a; }
+    .nav-btn-resume { color: #f472b6; border-color: #831843; }
+    .nav-btn-newline { color: #a3e635; border-color: #365314; }
 
     /* Compact buttons that just hold a glyph or graphic, no padded text. */
     .nav-btn-mini { padding: 0.35rem 0; font-size: 0.85rem; }
@@ -396,16 +398,10 @@
       <button id="key-shift-tab" class="nav-btn nav-btn-claude" type="button">Claude Mode</button>
     </div>
 
-    <!-- Cursor positioning + rarely-used big deletes, tucked safely at the top -->
+    <!-- Cancel + newline-without-send: the two non-mouse-replaceable Claude Code keys. -->
     <div class="nav-row">
-      <button id="key-ctrl-a" class="nav-btn nav-btn-mini nav-btn-iconrow" type="button" aria-label="Jump to line start">
-        <span class="line-mark line-mark-start"></span>
-        <span>Start</span>
-      </button>
-      <button id="key-ctrl-e" class="nav-btn nav-btn-mini nav-btn-iconrow" type="button" aria-label="Jump to line end">
-        <span>End</span>
-        <span class="line-mark line-mark-end"></span>
-      </button>
+      <button id="key-ctrl-c" class="nav-btn nav-btn-bksp" type="button">^C Cancel</button>
+      <button id="key-ctrl-enter" class="nav-btn nav-btn-newline" type="button">&#x21B5; Newline</button>
     </div>
     <div class="nav-row">
       <button id="key-ctrl-u" class="nav-btn nav-btn-mini nav-btn-edit nav-btn-iconrow" type="button" aria-label="Clear all input">
@@ -422,6 +418,7 @@
     <!-- Text macros -->
     <div class="nav-row">
       <button id="key-btw" class="nav-btn nav-btn-macro nav-btn-btw" type="button">/btw</button>
+      <button id="key-resume" class="nav-btn nav-btn-macro nav-btn-resume" type="button">/resume</button>
       <button id="key-push" class="nav-btn nav-btn-macro nav-btn-push" type="button">push &#x21B5;</button>
     </div>
 

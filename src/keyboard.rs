@@ -155,6 +155,12 @@ pub fn tap_ctrl_w() { tap_mod_chord(VK_CONTROL as VIRTUAL_KEY, b'W' as VIRTUAL_K
 pub fn tap_ctrl_k() { tap_mod_chord(VK_CONTROL as VIRTUAL_KEY, b'K' as VIRTUAL_KEY); }
 pub fn tap_ctrl_a() { tap_mod_chord(VK_CONTROL as VIRTUAL_KEY, b'A' as VIRTUAL_KEY); }
 pub fn tap_ctrl_e() { tap_mod_chord(VK_CONTROL as VIRTUAL_KEY, b'E' as VIRTUAL_KEY); }
+pub fn tap_ctrl_c() { tap_mod_chord(VK_CONTROL as VIRTUAL_KEY, b'C' as VIRTUAL_KEY); }
+// Newline-without-send in Claude Code on Windows Terminal: Ctrl+Enter is what
+// actually works (Shift+Enter isn't recognized despite /terminal-setup claiming
+// it is). VK_RETURN here is non-extended -- same shape as plain Enter.
+pub fn tap_ctrl_enter() { tap_mod_chord(VK_CONTROL as VIRTUAL_KEY, VK_RETURN as VIRTUAL_KEY); }
+pub fn tap_tab() { tap_vk(VK_TAB as VIRTUAL_KEY, false); }
 
 /// One UTF-16 code unit as a synthetic Unicode key event. Bypasses keyboard
 /// layout entirely -- works the same on QWERTY, AZERTY, Dvorak, etc.
@@ -195,5 +201,9 @@ pub fn type_push() {
 }
 pub fn type_clear() {
     type_text("/clear");
+    tap_enter();
+}
+pub fn type_resume() {
+    type_text("/resume");
     tap_enter();
 }
