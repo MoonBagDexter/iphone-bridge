@@ -1,0 +1,6 @@
+/target
+*.log
+
+# Third-party redistributable installer — not ours to relicense.
+# Users download it themselves from https://vb-audio.com/Cable/
+VBCABLE_Driver_Pack45/

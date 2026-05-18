@@ -1,0 +1,25 @@
+[package]
+name = "iphone-bridge"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wasapi = "0.23"
+anyhow = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "signal", "time"] }
+axum = { version = "0.8", features = ["ws"] }
+axum-server = { version = "0.8", features = ["tls-rustls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+rcgen = "0.14"
+futures-util = "0.3"
+local-ip-address = "0.6"
+bytes = "1"
+tray-icon = "0.21"
+arboard = "3"
+winreg = "0.55"
+windows-sys = { version = "0.60", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_Foundation"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

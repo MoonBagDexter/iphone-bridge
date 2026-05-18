@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>iPhone Bridge</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0a0a0a;
+      --fg: #f4f4f5;
+      --muted: #8a8a8e;
+      --accent: #4ade80;
+      --accent-dim: #166534;
+      --idle: #27272a;
+      --idle-bg: #18181b;
+    }
+    *, *::before, *::after {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    button { touch-action: manipulation; }
+    html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--fg); font: 16px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif; overflow: hidden; }
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      height: 100vh;            /* fallback for older browsers */
+      height: 100dvh;           /* respects iOS Safari URL bar */
+      padding-top: calc(env(safe-area-inset-top, 0px) + 0.6rem);
+      padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.25rem);
+      padding-left: 0.6rem;
+      padding-right: 0.6rem;
+    }
+    .view { display: flex; flex-direction: column; gap: 0.4rem; flex: 1; min-height: 0; }
+    .view[hidden] { display: none; }
+
+    /* Toast: brief overlay messages, never scrolls the layout. */
+    #toast {
+      position: fixed;
+      top: calc(env(safe-area-inset-top, 0px) + 0.4rem);
+      left: 50%;
+      transform: translate(-50%, -0.5rem);
+      background: rgba(20, 20, 22, 0.92);
+      color: var(--fg);
+      padding: 0.45rem 0.95rem;
+      border-radius: 999px;
+      border: 1px solid var(--idle);
+      font-size: 0.78rem;
+      font-weight: 500;
+      opacity: 0;
+      transition: opacity 180ms ease, transform 180ms ease;
+      pointer-events: none;
+      z-index: 1000;
+      max-width: 90vw;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+    /* Bridge mode (existing). */
+    .toggle {
+      flex: 1;
+      border: 1px solid var(--idle);
+      background: var(--idle-bg);
+      border-radius: 1.5rem;
+      padding: 2rem 1.5rem;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      cursor: pointer;
+      transition: background 120ms ease, border-color 120ms ease;
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .toggle:active { transform: scale(0.995); }
+    .toggle .label { font-size: 1.5rem; font-weight: 600; }
+    .toggle .state { font-size: 0.9rem; color: var(--muted); }
+    .toggle.on { border-color: var(--accent); background: var(--accent-dim); }
+    .toggle.on .state { color: var(--accent); }
+
+    /* PTT view: top-down = arrows / editing / switching / Enter / PTT. */
+    .ptt-state { font-size: 0.8rem; color: var(--muted); text-align: center; min-height: 1em; }
+
+    .arrow-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: repeat(2, 1fr);
+      gap: 0.35rem;
+      flex: 0 0 auto;
+      height: 7.5rem;
+    }
+    .arrow-grid .arrow-btn {
+      border: 1px solid var(--idle);
+      background: var(--idle-bg);
+      color: inherit;
+      font: inherit;
+      font-size: 1.4rem;
+      font-weight: 600;
+      border-radius: 0.9rem;
+      cursor: pointer;
+      -webkit-appearance: none;
+      appearance: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.35rem;
+      padding: 0;
+    }
+    .arrow-btn:active { background: var(--idle); border-color: var(--accent); color: var(--accent); }
+    /* Row 1: Start | ↑ | End. Row 2: ← | ↓ | →. All cells equal size. */
+    .arrow-start { grid-column: 1; grid-row: 1; font-size: 0.95rem; color: var(--muted); justify-content: flex-start; padding-left: 0.7rem; }
+    .arrow-up    { grid-column: 2; grid-row: 1; }
+    .arrow-end   { grid-column: 3; grid-row: 1; font-size: 0.95rem; color: var(--muted); justify-content: flex-end; padding-right: 0.7rem; }
+    .arrow-left  { grid-column: 1; grid-row: 2; }
+    .arrow-down  { grid-column: 2; grid-row: 2; }
+    .arrow-right { grid-column: 3; grid-row: 2; }
+    .nav-btn-edit { font-size: 0.95rem; color: var(--muted); }
+
+    .nav-row {
+      display: flex;
+      gap: 0.35rem;
+      width: 100%;
+      flex: 0 0 auto;
+    }
+    .nav-btn {
+      flex: 1;
+      padding: 0.55rem 0;
+      border-radius: 0.85rem;
+      border: 1px solid var(--idle);
+      background: var(--idle-bg);
+      color: inherit;
+      font: inherit;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .nav-btn { transition: background 60ms ease, border-color 60ms ease, color 60ms ease, transform 50ms ease; }
+    .nav-btn:active,
+    .nav-btn.flash {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+      color: var(--accent);
+      transform: scale(0.97);
+    }
+    .arrow-btn { transition: background 60ms ease, border-color 60ms ease, color 60ms ease, transform 50ms ease; }
+    .arrow-btn:active,
+    .arrow-btn.flash {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+      color: var(--accent);
+      transform: scale(0.97);
+    }
+    .enter-btn.flash, .space-btn.flash, .ptt-btn.flash {
+      filter: brightness(1.4);
+      transform: scale(0.995);
+    }
+    .nav-btn-desk { font-size: 0.95rem; letter-spacing: 0.04em; color: var(--muted); }
+    .nav-btn-tab { letter-spacing: 0.03em; }
+    .nav-btn-macro { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+    /* Color-coded buttons for quick visual scanning. */
+    .nav-btn-claude { color: #c084fc; border-color: #581c87; }
+    .nav-btn-bksp { color: #f87171; border-color: #7f1d1d; }
+    .nav-btn-btw { color: #fbbf24; border-color: #78350f; }
+    .nav-btn-push { color: #60a5fa; border-color: #1e3a8a; }
+    .nav-btn-switch { color: #2dd4bf; border-color: #134e4a; }
+
+    /* Compact buttons that just hold a glyph or graphic, no padded text. */
+    .nav-btn-mini { padding: 0.35rem 0; font-size: 0.85rem; }
+
+    /* Inline icon sizing inside buttons. */
+    .icon {
+      width: 1.2rem;
+      height: 1.2rem;
+      display: inline-block;
+      vertical-align: middle;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.6;
+    }
+    .nav-btn-iconrow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+    }
+
+    /* Line + cursor indicator: a thin horizontal bar with a vertical caret
+       at one end, showing whether the cursor jumps to start or end of line. */
+    .line-mark {
+      display: inline-block;
+      position: relative;
+      width: 1.4rem;
+      height: 0.12rem;
+      background: rgba(255, 255, 255, 0.35);
+      border-radius: 1px;
+      vertical-align: middle;
+    }
+    .line-mark::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      width: 0.16rem;
+      height: 0.85rem;
+      background: var(--accent);
+      border-radius: 1px;
+      transform: translateY(-50%);
+    }
+    .line-mark-start::before { left: -0.04rem; }
+    .line-mark-end::before   { right: -0.04rem; }
+
+    .enter-btn {
+      flex: 0 0 auto;
+      height: 2.8rem;
+      border-radius: 1rem;
+      border: 1px solid #14532d;
+      background: rgba(22, 101, 52, 0.18);
+      color: var(--accent);
+      font: inherit;
+      font-size: 1.25rem;
+      font-weight: 700;
+      cursor: pointer;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .enter-btn:active { background: var(--accent-dim); }
+
+    .ptt-btn {
+      flex: 1;
+      min-height: 4.5rem;
+      width: 100%;
+      border-radius: 1.25rem;
+      border: 1px solid var(--idle);
+      background: var(--idle-bg);
+      color: inherit;
+      font: inherit;
+      font-size: 1.75rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+      -webkit-appearance: none;
+      appearance: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+    }
+    .ptt-btn:active { transform: scale(0.995); }
+    .ptt-btn.on { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+    .ptt-btn.draining { border-color: #f59e0b; background: #78350f; color: #fbbf24; }
+
+    .space-btn {
+      flex: 0 0 auto;
+      height: 5.5vh;
+      min-height: 2.4rem;
+      width: 100%;
+      border-radius: 0.85rem;
+      border: 1px solid var(--idle);
+      background: var(--idle-bg);
+      color: inherit;
+      font: inherit;
+      font-size: 0.95rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      cursor: pointer;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .space-btn:active { background: var(--idle); border-color: var(--accent); color: var(--accent); }
+
+    /* Mode switcher. */
+    .mode-switch {
+      display: flex;
+      gap: 0.2rem;
+      background: var(--idle-bg);
+      border: 1px solid var(--idle);
+      border-radius: 999px;
+      padding: 0.2rem;
+      margin-top: 0.35rem;
+      align-self: center;
+    }
+    .mode-pill {
+      flex: 0 0 auto;
+      padding: 0.25rem 0.9rem;
+      border-radius: 999px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      letter-spacing: 0.02em;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .mode-pill.active { background: var(--idle); color: var(--fg); }
+
+    footer { padding-top: 0.2rem; font-size: 0.65rem; color: var(--muted); text-align: center; min-height: 0.9rem; }
+  </style>
+</head>
+<body>
+  <div id="view-bridge" class="view">
+    <button id="audio-btn" class="toggle" type="button">
+      <span class="label">Audio Out</span>
+      <span class="state" id="audio-state">tap to start</span>
+    </button>
+    <button id="mic-btn" class="toggle" type="button">
+      <span class="label">Mic In</span>
+      <span class="state" id="mic-state">tap to start</span>
+    </button>
+  </div>
+
+  <div id="view-ptt" class="view" hidden>
+    <span class="ptt-state" id="ptt-state">tap to activate</span>
+
+    <div class="nav-row">
+      <button id="key-escape" class="nav-btn" type="button">Esc</button>
+      <button id="key-shift-tab" class="nav-btn nav-btn-claude" type="button">Claude Mode</button>
+      <button id="key-backspace" class="nav-btn nav-btn-bksp" type="button">&#x232B;</button>
+    </div>
+
+    <div class="nav-row">
+      <button id="key-ctrl-u" class="nav-btn nav-btn-edit" type="button">Clear All</button>
+      <button id="key-ctrl-w" class="nav-btn nav-btn-edit" type="button">&#x232B; Word</button>
+      <button id="key-ctrl-k" class="nav-btn nav-btn-edit" type="button">Line &#x2326;</button>
+    </div>
+
+    <div class="nav-row">
+      <button id="key-btw" class="nav-btn nav-btn-macro nav-btn-btw" type="button">/btw</button>
+      <button id="key-push" class="nav-btn nav-btn-macro nav-btn-push" type="button">push &#x21B5;</button>
+    </div>
+
+    <div class="nav-row">
+      <button id="key-alt-tab" class="nav-btn nav-btn-tab nav-btn-switch" type="button">Alt+Tab</button>
+      <button id="key-ctrl-tab" class="nav-btn nav-btn-tab nav-btn-switch" type="button">Ctrl+Tab</button>
+      <button id="key-min-window" class="nav-btn nav-btn-switch" type="button">Min</button>
+    </div>
+
+    <div class="nav-row">
+      <button id="key-desktop-left" class="nav-btn nav-btn-desk nav-btn-iconrow" type="button" aria-label="Previous desktop">
+        <span>&#x21E6;</span>
+        <svg class="icon" viewBox="0 0 20 20" aria-hidden="true">
+          <rect x="2" y="3" width="7" height="6" rx="1.2"/>
+          <rect x="11" y="3" width="7" height="6" rx="1.2"/>
+          <rect x="2" y="11" width="7" height="6" rx="1.2"/>
+          <rect x="11" y="11" width="7" height="6" rx="1.2"/>
+        </svg>
+      </button>
+      <button id="key-desktop-right" class="nav-btn nav-btn-desk nav-btn-iconrow" type="button" aria-label="Next desktop">
+        <svg class="icon" viewBox="0 0 20 20" aria-hidden="true">
+          <rect x="2" y="3" width="7" height="6" rx="1.2"/>
+          <rect x="11" y="3" width="7" height="6" rx="1.2"/>
+          <rect x="2" y="11" width="7" height="6" rx="1.2"/>
+          <rect x="11" y="11" width="7" height="6" rx="1.2"/>
+        </svg>
+        <span>&#x21E8;</span>
+      </button>
+    </div>
+
+    <button id="key-enter" class="enter-btn" type="button">Enter &#x21B5;</button>
+
+    <div class="arrow-grid">
+      <button id="key-ctrl-a" class="arrow-btn arrow-start" type="button" aria-label="Jump to line start">
+        <span class="line-mark line-mark-start"></span>
+        <span>Start</span>
+      </button>
+      <button id="key-up" class="arrow-btn arrow-up" type="button">&#x2191;</button>
+      <button id="key-ctrl-e" class="arrow-btn arrow-end" type="button" aria-label="Jump to line end">
+        <span>End</span>
+        <span class="line-mark line-mark-end"></span>
+      </button>
+      <button id="key-left" class="arrow-btn arrow-left" type="button">&#x2190;</button>
+      <button id="key-down" class="arrow-btn arrow-down" type="button">&#x2193;</button>
+      <button id="key-right" class="arrow-btn arrow-right" type="button">&#x2192;</button>
+    </div>
+
+    <button id="ptt-btn" class="ptt-btn" type="button">Activate</button>
+
+    <button id="key-space" class="space-btn" type="button">space</button>
+  </div>
+
+  <div class="mode-switch">
+    <button id="mode-bridge" class="mode-pill active" type="button">Bridge</button>
+    <button id="mode-ptt" class="mode-pill" type="button">PTT</button>
+  </div>
+
+  <div id="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
