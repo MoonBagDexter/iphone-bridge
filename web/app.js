@@ -371,6 +371,7 @@ micBtn.addEventListener('click', async () => {
 // sees the full tail of the user's speech before its hotkey ends listening.
 
 const pttBtn = document.getElementById('ptt-btn');
+const pttLabelEl = document.getElementById('ptt-label');
 const pttStateEl = document.getElementById('ptt-state');
 
 let pttActivated = false;
@@ -382,7 +383,7 @@ let pttWs = null;
 let pttDrainTimer = null;
 
 function setPttUi(label, stateMsg, cls /* 'on' | 'draining' | null */) {
-  pttBtn.textContent = label;
+  pttLabelEl.textContent = label;
   pttBtn.classList.toggle('on', cls === 'on');
   pttBtn.classList.toggle('draining', cls === 'draining');
   pttStateEl.textContent = stateMsg;
@@ -577,6 +578,14 @@ document.addEventListener('pointerdown', (e) => {
   setTimeout(() => btn.classList.remove('flash'), 130);
 }, { passive: true });
 
+// Lock the page: kill iOS Safari's rubber-band drag entirely. CSS
+// touch-action: none on body covers most cases, but a non-passive touchmove
+// preventDefault is the belt-and-braces guarantee that no finger drag ever
+// scrolls or overscrolls the layout.
+document.addEventListener('touchmove', (e) => {
+  if (e.cancelable) e.preventDefault();
+}, { passive: false });
+
 // Hold-to-repeat: fires immediately on press, then after a 400 ms delay starts
 // repeating every 50 ms until release. Used for arrows + backspace where the
 // user wants to "hold to keep going" the way a physical keyboard does.
@@ -627,6 +636,7 @@ document.getElementById('key-ctrl-e').addEventListener('click', () => sendKey('c
 document.getElementById('key-btw').addEventListener('click', () => sendKey('btw'));
 document.getElementById('key-push').addEventListener('click', () => sendKey('push'));
 document.getElementById('key-min-window').addEventListener('click', () => sendKey('min-window'));
+document.getElementById('key-clear').addEventListener('click', () => sendKey('clear'));
 
 // ---- Mode switcher --------------------------------------------------------
 
@@ -636,6 +646,11 @@ const viewBridge = document.getElementById('view-bridge');
 const viewPtt = document.getElementById('view-ptt');
 
 const MODE_KEY = 'iphone-bridge-mode';
+
+// Set true when entering PTT mode without an active user gesture (e.g. via
+// localStorage restore on page load). Resolved on the next pointer event so
+// the iOS mic-permission prompt fires immediately on first interaction.
+let pendingAutoActivate = false;
 
 async function setMode(mode) {
   if (mode === 'ptt') {
@@ -650,8 +665,16 @@ async function setMode(mode) {
 
     // Open the control WebSocket immediately so nav keys (arrows, Esc,
     // Enter, Ctrl-X shortcuts, tab/desktop switching) work without the user
-    // having to tap Activate first. The mic still requires Activate.
+    // having to tap Activate first.
     openPttWs();
+
+    // Auto-trigger Activate. If we got here from a user gesture (the mode
+    // pill being tapped), iOS allows the mic-permission prompt to appear
+    // immediately. If we got here from localStorage restore on page load
+    // (no gesture), defer to the first pointer event.
+    if (!pttActivated) {
+      activatePtt().catch(() => { pendingAutoActivate = true; });
+    }
   } else {
     // Tear down PTT resources. If currently transmitting, send a stop so the
     // server doesn't leave SuperWhisper in the "listening" state.
@@ -671,6 +694,22 @@ async function setMode(mode) {
 
 modeBridgeBtn.addEventListener('click', () => setMode('bridge'));
 modePttBtn.addEventListener('click', () => setMode('ptt'));
+
+// Manual reload -- when the page is a home-screen web clip there's no Safari
+// chrome to pull-to-refresh, so this is the only way out of a wedged state.
+document.getElementById('refresh-btn').addEventListener('click', () => {
+  location.reload();
+});
+
+// If PTT mode was restored on load without a user gesture, the initial
+// activatePtt() call will have been rejected by iOS. Try again on the very
+// first pointer interaction (which IS a gesture).
+document.addEventListener('pointerdown', () => {
+  if (pendingAutoActivate && !pttActivated && !viewPtt.hidden) {
+    pendingAutoActivate = false;
+    activatePtt();
+  }
+}, { capture: true });
 
 // Restore last-used mode on load.
 try {

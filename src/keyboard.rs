@@ -116,7 +116,10 @@ fn tap_mod_chord(modifier: VIRTUAL_KEY, key: VIRTUAL_KEY) {
 // Alt after ~800 ms of no further taps.
 static ALT_HELD: AtomicBool = AtomicBool::new(false);
 static ALT_TAB_TOKEN: AtomicU64 = AtomicU64::new(0);
-const ALT_TAB_RELEASE_MS: u64 = 800;
+// Idle window after the last Alt+Tab tap before Alt is released and the
+// task-switcher selection commits. Short enough to feel snappy, long enough
+// that a normal fast tap rhythm (~5 taps/sec) keeps Alt held.
+const ALT_TAB_RELEASE_MS: u64 = 350;
 
 pub fn alt_tab_cycle() {
     let token = ALT_TAB_TOKEN.fetch_add(1, Ordering::SeqCst) + 1;
@@ -188,5 +191,9 @@ pub fn type_text(text: &str) {
 pub fn type_btw() { type_text("/btw "); }
 pub fn type_push() {
     type_text("push");
+    tap_enter();
+}
+pub fn type_clear() {
+    type_text("/clear");
     tap_enter();
 }

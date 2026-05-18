@@ -142,6 +142,7 @@ async fn handle_mic(socket: WebSocket, state: AppState) {
                 "key:ctrl-e" => keyboard::tap_ctrl_e(),
                 "key:btw" => keyboard::type_btw(),
                 "key:push" => keyboard::type_push(),
+                "key:clear" => keyboard::type_clear(),
                 "key:space" => keyboard::tap_space(),
                 "key:min-window" => keyboard::tap_min_window(),
                 other => {

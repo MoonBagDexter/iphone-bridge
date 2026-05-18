@@ -1,5 +1,5 @@
 use anyhow::Result;
-use axum::{response::Html, routing::get, Router};
+use axum::{routing::get, Router};
 use axum_server::tls_rustls::RustlsConfig;
 use bytes::Bytes;
 use std::net::SocketAddr;
@@ -20,27 +20,33 @@ const APP_JS: &str = include_str!("../../web/app.js");
 const WORKLET_JS: &str = include_str!("../../web/worklet.js");
 const MIC_WORKLET_JS: &str = include_str!("../../web/mic-worklet.js");
 
-async fn index() -> Html<&'static str> {
-    Html(INDEX_HTML)
-}
+// Tell every browser (including the iOS home-screen web-clip cache) to never
+// serve a stale copy. Assets are tiny and rebuilds change them on every deploy.
+const NO_STORE: &str = "no-store, no-cache, must-revalidate, max-age=0";
 
-fn js_response(
-    body: &'static str,
-) -> ([(axum::http::HeaderName, &'static str); 1], &'static str) {
+type StaticResponse = ([(axum::http::HeaderName, &'static str); 2], &'static str);
+
+fn static_response(content_type: &'static str, body: &'static str) -> StaticResponse {
     (
-        [(axum::http::header::CONTENT_TYPE, "application/javascript")],
+        [
+            (axum::http::header::CONTENT_TYPE, content_type),
+            (axum::http::header::CACHE_CONTROL, NO_STORE),
+        ],
         body,
     )
 }
 
-async fn app_js() -> ([(axum::http::HeaderName, &'static str); 1], &'static str) {
-    js_response(APP_JS)
+async fn index() -> StaticResponse {
+    static_response("text/html; charset=utf-8", INDEX_HTML)
 }
-async fn worklet_js() -> ([(axum::http::HeaderName, &'static str); 1], &'static str) {
-    js_response(WORKLET_JS)
+async fn app_js() -> StaticResponse {
+    static_response("application/javascript", APP_JS)
 }
-async fn mic_worklet_js() -> ([(axum::http::HeaderName, &'static str); 1], &'static str) {
-    js_response(MIC_WORKLET_JS)
+async fn worklet_js() -> StaticResponse {
+    static_response("application/javascript", WORKLET_JS)
+}
+async fn mic_worklet_js() -> StaticResponse {
+    static_response("application/javascript", MIC_WORKLET_JS)
 }
 
 fn router(audio_tx: broadcast::Sender<Bytes>, mic_tx: mpsc::Sender<MicMsg>) -> Router {
