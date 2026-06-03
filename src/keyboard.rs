@@ -96,6 +96,11 @@ fn tap_win_chord(vk: VIRTUAL_KEY) {
 
 pub fn tap_min_window() { tap_win_chord(VK_DOWN as VIRTUAL_KEY); }
 
+// Win+Tab opens Task View -- the full-screen overlay of all open windows (and
+// virtual desktops). Tab is NOT an extended key, so this rides tap_mod_chord
+// rather than tap_win_chord (which forces KEYEVENTF_EXTENDEDKEY, wrong for Tab).
+pub fn tap_task_view() { tap_mod_chord(VK_LWIN as VIRTUAL_KEY, VK_TAB as VIRTUAL_KEY); }
+
 /// Press `modifier`, tap `key`, release `modifier`. Used for the standard
 /// Alt+Tab / Ctrl+Tab / Shift+Tab chords. None of these keys are extended.
 fn tap_mod_chord(modifier: VIRTUAL_KEY, key: VIRTUAL_KEY) {

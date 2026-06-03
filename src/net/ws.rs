@@ -149,6 +149,7 @@ async fn handle_mic(socket: WebSocket, state: AppState) {
                 "key:clear" => keyboard::type_clear(),
                 "key:space" => keyboard::tap_space(),
                 "key:min-window" => keyboard::tap_min_window(),
+                "key:task-view" => keyboard::tap_task_view(),
                 other => {
                     eprintln!("[ws-mic] ignoring unknown text frame: {other:?}");
                 }

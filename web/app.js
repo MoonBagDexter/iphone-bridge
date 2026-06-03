@@ -382,6 +382,24 @@ let pttCaptureNode = null;
 let pttWs = null;
 let pttDrainTimer = null;
 
+// Lifecycle / reconnect state. iOS suspends WebSockets, AudioContexts, and
+// MediaStream tracks when the home-screen web clip backgrounds, so the socket
+// disappears constantly. We treat pttWs as ephemeral and auto-heal it.
+let pttModeActive = false;             // True only while view-ptt is showing.
+let pttWsReconnectAttempts = 0;
+let pttWsReconnectTimer = null;
+let pttWsLastCloseAt = 0;              // For "reconnected" toast threshold.
+const pendingKeys = [];                // { name, expiresAt } -- discrete key presses queued during outage.
+const PENDING_KEY_TTL_MS = 1500;       // Long enough to ride a typical iOS resume, short enough that stale Esc doesn't fire late.
+const PENDING_KEY_CAP = 16;            // Drop oldest if a long outage piles things up.
+const WS_BACKOFF_MS = [250, 500, 1000, 2000, 4000];
+// True when the user pressed PTT but the WS wasn't OPEN yet, so we haven't
+// actually sent ptt:start. Without this the first press after Slide-Over
+// returns is eaten by the reconnect window: the start is dropped silently,
+// release sends a stop, server taps Alt anyway, and SuperWhisper interprets
+// the lone Alt as "start listening" -- forcing a second tap to toggle off.
+let pttStartPending = false;
+
 function setPttUi(label, stateMsg, cls /* 'on' | 'draining' | null */) {
   pttLabelEl.textContent = label;
   pttBtn.classList.toggle('on', cls === 'on');
@@ -392,33 +410,101 @@ function setPttUi(label, stateMsg, cls /* 'on' | 'draining' | null */) {
 // Open the keys/control WebSocket. Doesn't require any iOS permission, so we
 // can do this the moment the user enters PTT mode (or restores it on load).
 // Nav-key buttons just need this open to work; only PTT itself needs the mic.
+// The socket is treated as ephemeral: iOS will close it on every backgrounding,
+// and we auto-reconnect with bounded backoff. Mic context/stream are kept
+// alive across socket drops -- only the transport died, not the permission.
 function openPttWs() {
   if (pttWs && pttWs.readyState !== WebSocket.CLOSED) return;
+  if (pttWsReconnectTimer) { clearTimeout(pttWsReconnectTimer); pttWsReconnectTimer = null; }
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   pttWs = new WebSocket(`${proto}//${location.host}/mic`);
   pttWs.binaryType = 'arraybuffer';
 
+  pttWs.onopen = () => {
+    pttWsReconnectAttempts = 0;
+    // Only toast for outages long enough to actually notice -- otherwise every
+    // quick iOS focus-blur flashes a confirmation, which is noisy.
+    if (pttWsLastCloseAt && (Date.now() - pttWsLastCloseAt) > 1000) {
+      toast('reconnected');
+    }
+    pttWsLastCloseAt = 0;
+    flushPendingKeys();
+    // If the user pressed PTT during the reconnect window, the start was
+    // deferred. Fire it now -- but only if they're still pressing.
+    if (pttStartPending && pttTransmitting) {
+      try { pttWs.send('ptt:start'); } catch (_) {}
+    }
+    pttStartPending = false;
+    // Drop the "reconnecting…" message if that's what's showing.
+    if (pttActivated && pttStateEl.textContent === 'reconnecting…') {
+      setPttUi('Push to Talk', pttTransmitting ? 'release / tap to stop' : 'tap or hold',
+               pttTransmitting ? 'on' : null);
+    }
+  };
+
   pttWs.onclose = () => {
-    pttTransmitting = false;
-    teardownPttMic();
+    pttWsLastCloseAt = Date.now();
     pttWs = null;
-    if (!pttActivated) {
-      setPttUi('Activate', 'disconnected', null);
-    } else {
-      setPttUi('Activate', 'disconnected', null);
-      pttActivated = false;
+    // The socket dropped, but the mic context/stream and permission are still
+    // ours. Don't tear them down -- just reconnect.
+    pttTransmitting = false;
+    if (pttModeActive) {
+      scheduleReconnect();
+      if (pttActivated) {
+        setPttUi('Push to Talk', 'reconnecting…', null);
+      }
     }
   };
 
   pttWs.onerror = () => {
-    setFooter('mic websocket error');
+    // Silent: iOS fires this on every backgrounding cycle. The onclose handler
+    // is what actually drives recovery.
   };
 }
 
+function scheduleReconnect() {
+  if (pttWsReconnectTimer) return;
+  if (!pttModeActive) return;
+  const delay = WS_BACKOFF_MS[Math.min(pttWsReconnectAttempts, WS_BACKOFF_MS.length - 1)];
+  pttWsReconnectAttempts += 1;
+  pttWsReconnectTimer = setTimeout(() => {
+    pttWsReconnectTimer = null;
+    if (!pttModeActive) return;
+    openPttWs();
+  }, delay);
+}
+
+function flushPendingKeys() {
+  const now = Date.now();
+  while (pendingKeys.length) {
+    const k = pendingKeys.shift();
+    if (k.expiresAt < now) continue;
+    if (pttWs && pttWs.readyState === WebSocket.OPEN) {
+      pttWs.send('key:' + k.name);
+    } else {
+      // Socket died again mid-flush; put it back and stop.
+      pendingKeys.unshift(k);
+      break;
+    }
+  }
+}
+
+// Generation token: increments on every press AND release. Any async work
+// that started under a given gen aborts if pttTalkGen has moved on -- prevents
+// a slow getUserMedia from leaving a hot mic after the user already released.
+let pttTalkGen = 0;
+
+// "Activate" only PRIMES the mic permission. We acquire getUserMedia briefly
+// to satisfy the iOS permission prompt, then release the tracks immediately
+// so iOS deactivates the voice-chat audio session -- otherwise other apps
+// (Moonlight desktop audio on a split-screen iPad, etc.) get ducked or muted
+// the entire time PTT mode is open, even when not actively talking.
+// The real mic acquisition happens on each PTT press in startTransmitting().
 async function activatePtt() {
   setPttUi('…', 'asking permission…', null);
+  let primer;
   try {
-    pttStream = await navigator.mediaDevices.getUserMedia({
+    primer = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: true,
         noiseSuppression: true,
@@ -433,6 +519,123 @@ async function activatePtt() {
     setFooter(String(e));
     return;
   }
+  // Release immediately -- iOS will deactivate the voice-chat session within
+  // a few hundred ms and other apps get their audio back.
+  primer.getTracks().forEach((t) => t.stop());
+
+  openPttWs();
+  pttActivated = true;
+  setPttUi('Push to Talk', 'tap or hold', null);
+}
+
+// Tear down the per-transmission mic graph. Idempotent. Does NOT reset
+// pttActivated -- the user still has permission, we just released the
+// audio session.
+function teardownTalkingMic() {
+  if (pttCaptureNode) {
+    try { pttCaptureNode.port.onmessage = null; } catch (_) {}
+    try { pttCaptureNode.disconnect(); } catch (_) {}
+    pttCaptureNode = null;
+  }
+  if (pttCtx) { pttCtx.close().catch(() => {}); pttCtx = null; }
+  if (pttStream) {
+    // Unwire the track listeners BEFORE stopping -- otherwise calling .stop()
+    // ourselves fires track.onended, which would tear down activation state
+    // as if iOS had revoked permission. Only genuine system-side stops (mic
+    // permission revoked, page killed) should reach the onended handler.
+    pttStream.getTracks().forEach((t) => {
+      t.onended = null;
+      t.onmute = null;
+      t.stop();
+    });
+    pttStream = null;
+  }
+}
+
+// Full PTT teardown -- only used on mode exit.
+function teardownPtt() {
+  if (pttDrainTimer) { clearTimeout(pttDrainTimer); pttDrainTimer = null; }
+  pttTalkGen++; // invalidate any in-flight startTransmitting
+  pttTransmitting = false;
+  pttActivated = false;
+  pttStartPending = false;
+  teardownTalkingMic();
+  if (pttWs) {
+    try { pttWs.close(); } catch (_) {}
+    pttWs = null;
+  }
+}
+
+// Press starts here. Tap Alt server-side FIRST (before the ~100-300ms iOS
+// mic spinup) so SuperWhisper starts listening as fast as possible. PCM
+// frames begin flowing once the AudioContext is ready; the very first
+// transient of speech may be lost but everything from "spinup done" onward
+// is captured, and SuperWhisper's own VAD handles the leading edge.
+async function startTransmitting() {
+  pttTransmitting = true;
+  setPttUi('Listening…', 'release / tap to stop', 'on');
+
+  if (pttWs && pttWs.readyState === WebSocket.OPEN) {
+    pttWs.send('ptt:start');
+    pttStartPending = false;
+  } else {
+    // WS is reconnecting (typically after Slide-Over return on iPad). Defer
+    // the start until onopen fires; if the user releases first, stopTransmitting
+    // will clear the flag.
+    pttStartPending = true;
+    if (pttModeActive && !pttWsReconnectTimer && (!pttWs || pttWs.readyState === WebSocket.CLOSED)) {
+      openPttWs();
+    }
+  }
+
+  const myGen = ++pttTalkGen;
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+        sampleRate: 48000,
+      },
+      video: false,
+    });
+  } catch (e) {
+    if (myGen !== pttTalkGen) return;
+    pttTransmitting = false;
+    pttActivated = false;
+    setPttUi('Activate', 'mic acquire failed', null);
+    setFooter(String(e));
+    if (pttWs && pttWs.readyState === WebSocket.OPEN) {
+      pttWs.send('ptt:stop');
+    }
+    return;
+  }
+
+  // User released (or mode changed) while getUserMedia was in flight -- drop.
+  if (myGen !== pttTalkGen) {
+    stream.getTracks().forEach((t) => t.stop());
+    return;
+  }
+  pttStream = stream;
+
+  // Genuine permission loss / system kill during transmission.
+  const track = pttStream.getAudioTracks()[0];
+  if (track) {
+    track.onended = () => {
+      pttTalkGen++;
+      pttTransmitting = false;
+      pttActivated = false;
+      teardownTalkingMic();
+      setPttUi('Activate', 'mic stream ended', null);
+      if (pttWs && pttWs.readyState === WebSocket.OPEN) {
+        try { pttWs.send('ptt:stop'); } catch (_) {}
+      }
+    };
+    track.onmute = () => { toast('mic muted by system'); };
+  }
 
   try {
     pttCtx = new (window.AudioContext || window.webkitAudioContext)({
@@ -441,26 +644,28 @@ async function activatePtt() {
     });
     await pttCtx.resume();
     await pttCtx.audioWorklet.addModule('/mic-worklet.js');
-    const source = pttCtx.createMediaStreamSource(pttStream);
-    pttCaptureNode = new AudioWorkletNode(pttCtx, 'mic-capture', {
-      numberOfInputs: 1,
-      numberOfOutputs: 0,
-    });
-    source.connect(pttCaptureNode);
   } catch (e) {
-    setPttUi('Activate', 'audio init failed', null);
+    if (myGen !== pttTalkGen) { teardownTalkingMic(); return; }
+    pttTransmitting = false;
+    setPttUi('Push to Talk', 'audio init failed', null);
     setFooter(String(e));
-    teardownPttMic();
+    teardownTalkingMic();
+    if (pttWs && pttWs.readyState === WebSocket.OPEN) {
+      pttWs.send('ptt:stop');
+    }
     return;
   }
 
-  // Make sure the control WS is up (it usually is from mode entry).
-  openPttWs();
+  // Second race check -- worklet load can take 10-50ms.
+  if (myGen !== pttTalkGen) { teardownTalkingMic(); return; }
 
-  pttActivated = true;
-  setPttUi('Push to Talk', 'tap to talk', null);
+  const source = pttCtx.createMediaStreamSource(pttStream);
+  pttCaptureNode = new AudioWorkletNode(pttCtx, 'mic-capture', {
+    numberOfInputs: 1,
+    numberOfOutputs: 0,
+  });
+  source.connect(pttCaptureNode);
 
-  // Forward PCM only while transmitting; otherwise drop on the floor.
   pttCaptureNode.port.onmessage = (e) => {
     if (!pttTransmitting) return;
     const d = e.data;
@@ -470,40 +675,22 @@ async function activatePtt() {
   };
 }
 
-function teardownPttMic() {
-  if (pttDrainTimer) { clearTimeout(pttDrainTimer); pttDrainTimer = null; }
-  if (pttCaptureNode) {
-    try { pttCaptureNode.port.onmessage = null; } catch (_) {}
-    try { pttCaptureNode.disconnect(); } catch (_) {}
-    pttCaptureNode = null;
-  }
-  if (pttCtx) { pttCtx.close().catch(() => {}); pttCtx = null; }
-  if (pttStream) { pttStream.getTracks().forEach((t) => t.stop()); pttStream = null; }
-  pttActivated = false;
-  pttTransmitting = false;
-}
-
-function teardownPtt() {
-  teardownPttMic();
-  if (pttWs) {
-    try { pttWs.close(); } catch (_) {}
-    pttWs = null;
-  }
-}
-
-function startTransmitting() {
-  if (pttWs && pttWs.readyState === WebSocket.OPEN) {
-    pttWs.send('ptt:start');
-  }
-  pttTransmitting = true;
-  setPttUi('Listening…', 'release / tap to stop', 'on');
-}
-
 function stopTransmitting() {
+  pttTalkGen++; // invalidate any in-flight startTransmitting
   pttTransmitting = false;
-  if (pttWs && pttWs.readyState === WebSocket.OPEN) {
+  // If the start was queued but never sent (WS was reconnecting), drop it on
+  // the floor -- don't send a lone ptt:stop, which would tap Alt server-side
+  // and put SuperWhisper into a hot state the user never asked for.
+  if (pttStartPending) {
+    pttStartPending = false;
+  } else if (pttWs && pttWs.readyState === WebSocket.OPEN) {
     pttWs.send('ptt:stop');
   }
+  // Tear the mic + audio session down right away -- iOS releases the voice
+  // session within a few hundred ms and other apps get their audio back.
+  // PCM frames already on the wire are ahead of the ptt:stop frame, and TCP
+  // ordering guarantees the server processes them before tapping Alt.
+  teardownTalkingMic();
   setPttUi('Push to Talk', 'draining…', 'draining');
   if (pttDrainTimer) clearTimeout(pttDrainTimer);
   pttDrainTimer = setTimeout(() => {
@@ -537,7 +724,12 @@ function pttPressDown(e) {
     pttPressTime = Date.now();
     startTransmitting();
   } else {
-    // Pressing while already transmitting = toggle off (legacy tap behavior).
+    // Guard against duplicate pointerdown -- on iPad (especially in split-screen)
+    // iOS dispatches a synthetic mouse pointerdown right after the touch one,
+    // and preventDefault doesn't always suppress it. Without this guard, a single
+    // tap fires the first event as "start" and the second (microseconds later)
+    // as "toggle off", which is why the button looks like it instant-disables.
+    if (Date.now() - pttPressTime < 200) return;
     pttPressOpenedTx = false;
     stopTransmitting();
   }
@@ -563,7 +755,28 @@ pttBtn.addEventListener('pointercancel', pttPressEnd);
 // All key commands ride on the same /mic WebSocket as text frames. They are
 // no-ops until the user has tapped Activate (since that's when pttWs opens).
 
+// Discrete one-shot key presses (Esc, Enter, /btw, etc.). If the WS is open,
+// fire immediately. Otherwise queue with a short TTL so a tap during a brief
+// reconnect lands once the socket is back -- past the TTL, the press is
+// dropped so a stale Esc doesn't fire long after the user moved on.
 function sendKey(name) {
+  if (pttWs && pttWs.readyState === WebSocket.OPEN) {
+    pttWs.send('key:' + name);
+    return;
+  }
+  pendingKeys.push({ name, expiresAt: Date.now() + PENDING_KEY_TTL_MS });
+  if (pendingKeys.length > PENDING_KEY_CAP) pendingKeys.shift();
+  // Make sure a reconnect attempt is in flight so the queue can drain.
+  if (pttModeActive && !pttWsReconnectTimer && (!pttWs || pttWs.readyState === WebSocket.CLOSED)) {
+    openPttWs();
+  }
+}
+
+// Variant for hold-to-repeat keys (arrows, backspace, space, ctrl-w). Queueing
+// these would be a disaster: a 2-second outage during a long backspace hold
+// would replay 40 stale deletes on reconnect. The repeater itself is the
+// retry mechanism -- just drop if the socket is down.
+function sendKeyNoQueue(name) {
   if (pttWs && pttWs.readyState === WebSocket.OPEN) {
     pttWs.send('key:' + name);
   }
@@ -596,10 +809,10 @@ function bindHoldRepeat(btn, name) {
   let repeatTimer = null;
   const start = (e) => {
     if (e.cancelable) e.preventDefault();
-    sendKey(name);
+    sendKeyNoQueue(name);
     delayTimer = setTimeout(() => {
       delayTimer = null;
-      repeatTimer = setInterval(() => sendKey(name), HOLD_INTERVAL_MS);
+      repeatTimer = setInterval(() => sendKeyNoQueue(name), HOLD_INTERVAL_MS);
     }, HOLD_DELAY_MS);
   };
   const stop = () => {
@@ -626,6 +839,7 @@ document.getElementById('key-escape').addEventListener('click', () => sendKey('e
 document.getElementById('key-enter').addEventListener('click', () => sendKey('enter'));
 document.getElementById('key-desktop-left').addEventListener('click', () => sendKey('desktop-left'));
 document.getElementById('key-desktop-right').addEventListener('click', () => sendKey('desktop-right'));
+document.getElementById('key-task-view').addEventListener('click', () => sendKey('task-view'));
 document.getElementById('key-alt-tab').addEventListener('click', () => sendKey('alt-tab'));
 document.getElementById('key-ctrl-tab').addEventListener('click', () => sendKey('ctrl-tab'));
 document.getElementById('key-shift-tab').addEventListener('click', () => sendKey('shift-tab'));
@@ -664,6 +878,8 @@ async function setMode(mode) {
     modeBridgeBtn.classList.remove('active');
     modePttBtn.classList.add('active');
 
+    pttModeActive = true;
+
     // Open the control WebSocket immediately so nav keys (arrows, Esc,
     // Enter, Ctrl-X shortcuts, tab/desktop switching) work without the user
     // having to tap Activate first.
@@ -677,6 +893,11 @@ async function setMode(mode) {
       activatePtt().catch(() => { pendingAutoActivate = true; });
     }
   } else {
+    pttModeActive = false;
+    if (pttWsReconnectTimer) { clearTimeout(pttWsReconnectTimer); pttWsReconnectTimer = null; }
+    pttWsReconnectAttempts = 0;
+    pendingKeys.length = 0;
+
     // Tear down PTT resources. If currently transmitting, send a stop so the
     // server doesn't leave SuperWhisper in the "listening" state.
     if (pttTransmitting && pttWs && pttWs.readyState === WebSocket.OPEN) {
@@ -711,6 +932,36 @@ document.addEventListener('pointerdown', () => {
     activatePtt();
   }
 }, { capture: true });
+
+// ---- iOS lifecycle recovery ----------------------------------------------
+// iOS aggressively suspends WebSockets, AudioContexts, and MediaStream tracks
+// when the home-screen web clip backgrounds (tab switch, lock, app switcher).
+// Proactively heal on every "we're visible again" signal so the user doesn't
+// have to tap Activate after coming back.
+
+function recoverPtt() {
+  if (!pttModeActive || viewPtt.hidden) return;
+  // Wake the audio context if iOS suspended it.
+  if (pttCtx && pttCtx.state === 'suspended') {
+    pttCtx.resume().catch(() => {});
+  }
+  // Re-open the control socket immediately (don't wait for the backoff timer).
+  if (!pttWs || pttWs.readyState === WebSocket.CLOSED) {
+    if (pttWsReconnectTimer) { clearTimeout(pttWsReconnectTimer); pttWsReconnectTimer = null; }
+    pttWsReconnectAttempts = 0;
+    openPttWs();
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') recoverPtt();
+});
+
+// bfcache restore (rare on iOS standalone clips, but covers full-Safari case).
+window.addEventListener('pageshow', (e) => { if (e.persisted) recoverPtt(); });
+
+// Network came back -- usually paired with visibilitychange, but not always.
+window.addEventListener('online', () => { recoverPtt(); });
 
 // Restore last-used mode on load.
 try {
