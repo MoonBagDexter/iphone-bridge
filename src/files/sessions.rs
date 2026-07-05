@@ -188,12 +188,13 @@ fn claude_command() -> String {
         .clone()
 }
 
-/// Spawn a Claude Code session in `path`. `name` defaults to the folder's
-/// basename. Returns the tracked `Session` on success.
+/// Spawn a Claude Code session in `path`. A user-chosen `name` is passed to
+/// the CLI; otherwise the CLI gets no name so the Claude app auto-titles the
+/// session, and the folder basename is used only as OUR panel's display name.
+/// Returns the tracked `Session` on success.
 ///
-/// Visible: `cmd.exe /k claude remote-control --name "<name>"` in a new console
-/// (CREATE_NEW_CONSOLE). Hidden: the same command with CREATE_NO_WINDOW and
-/// stdout/stderr appended to `sessions\<id>.log`.
+/// Visible: `cmd.exe /k claude --remote-control [..]` in a new console
+/// (CREATE_NEW_CONSOLE). Hidden: the same command with CREATE_NO_WINDOW.
 pub fn spawn(
     store: &SessionStore,
     path: &Path,
@@ -204,20 +205,23 @@ pub fn spawn(
     const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-    let session_name = match name {
-        Some(n) if !n.trim().is_empty() => n.trim().to_string(),
-        _ => path
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "claude".to_string()),
+    // A non-empty name is a deliberate user choice ("Custom name…") and goes
+    // to the CLI. Otherwise the CLI gets none (Claude app auto-titles) and the
+    // folder basename only labels the row in our sessions panel.
+    let custom_name = match name {
+        Some(n) if !n.trim().is_empty() => Some(n.trim().to_string()),
+        _ => None,
     };
+    let display_name = custom_name.clone().unwrap_or_else(|| {
+        path.file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "claude".to_string())
+    });
 
     let id = new_id();
     let claude = claude_command();
 
-    // Build the command line handed to `cmd.exe`. `remote-control --name`
-    // makes the session show up in the user's Claude iOS app.
-    let inner = build_spawn_cmdline(&claude, &session_name);
+    let inner = build_spawn_cmdline(&claude, custom_name.as_deref());
 
     let mut cmd = std::process::Command::new("cmd.exe");
     // Rust's default arg quoting escapes embedded quotes MSVC-style (\"),
@@ -250,7 +254,7 @@ pub fn spawn(
         id: id.clone(),
         pid,
         path: path.to_string_lossy().into_owned(),
-        name: session_name,
+        name: display_name,
         started_at_ms: now_ms(),
         hidden,
     };
@@ -284,17 +288,26 @@ pub fn kill(store: &SessionStore, id: &str) -> Result<(), String> {
 /// Command line run inside `cmd.exe /s /c "<line>"`. Pure so the quoting is
 /// testable: claude path and session name each get their own quote pair, and
 /// embedded quotes are stripped from the name (cmd.exe cannot escape them).
-fn build_spawn_cmdline(claude: &str, session_name: &str) -> String {
-    let name: String = session_name.chars().filter(|c| *c != '"').collect();
+fn build_spawn_cmdline(claude: &str, session_name: Option<&str>) -> String {
     // Interactive form, NOT `claude remote-control` server mode: server mode
     // registers a cloud-looking "environment" the app spawns fresh sessions
     // into, while `--remote-control` mirrors a normal LOCAL session (user's
     // scripts, CLAUDE.md, MCP config) into the app as-is.
     //
+    // The name after --remote-control is an optional positional: omitted, the
+    // Claude app auto-titles the session from the first prompt, so only a
+    // user-chosen custom name is passed through.
+    //
     // `--permission-mode auto`: phone-driven sessions can't be babysat, so
     // start in Auto mode (runs without routine prompts; a background safety
     // classifier still blocks escalations) rather than manual default.
-    format!("\"{claude}\" --remote-control \"{name}\" --permission-mode auto")
+    match session_name {
+        Some(n) => {
+            let name: String = n.chars().filter(|c| *c != '"').collect();
+            format!("\"{claude}\" --remote-control \"{name}\" --permission-mode auto")
+        }
+        None => format!("\"{claude}\" --remote-control --permission-mode auto"),
+    }
 }
 
 /// Does a process with this PID currently exist? Uses `OpenProcess` with the
@@ -407,7 +420,7 @@ mod tests {
     #[test]
     fn cmdline_quotes_name_with_spaces() {
         assert_eq!(
-            build_spawn_cmdline("claude", "MetaGrid (test)"),
+            build_spawn_cmdline("claude", Some("MetaGrid (test)")),
             "\"claude\" --remote-control \"MetaGrid (test)\" --permission-mode auto"
         );
     }
@@ -415,7 +428,7 @@ mod tests {
     #[test]
     fn cmdline_quotes_claude_path_with_spaces() {
         assert_eq!(
-            build_spawn_cmdline("C:\\Program Files\\node\\claude.cmd", "x"),
+            build_spawn_cmdline("C:\\Program Files\\node\\claude.cmd", Some("x")),
             "\"C:\\Program Files\\node\\claude.cmd\" --remote-control \"x\" --permission-mode auto"
         );
     }
@@ -425,8 +438,18 @@ mod tests {
         // cmd.exe has no way to escape a quote inside a quoted arg; embedded
         // quotes must be dropped or they break out of the quoting entirely.
         assert_eq!(
-            build_spawn_cmdline("claude", "evil\" & calc & \""),
+            build_spawn_cmdline("claude", Some("evil\" & calc & \"")),
             "\"claude\" --remote-control \"evil & calc & \" --permission-mode auto"
+        );
+    }
+
+    #[test]
+    fn cmdline_omits_name_for_auto_titling() {
+        // No explicit name -> bare --remote-control so Claude Code's automatic
+        // session naming takes over (title follows the first prompt).
+        assert_eq!(
+            build_spawn_cmdline("claude", None),
+            "\"claude\" --remote-control --permission-mode auto"
         );
     }
 

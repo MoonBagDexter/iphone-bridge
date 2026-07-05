@@ -2263,8 +2263,7 @@ entryListEl.addEventListener('click', (e) => {
     if (action === 'spawn') {
       // A long-press already handled this; suppress the trailing click.
       if (entryLongPressFired) { entryLongPressFired = false; return; }
-      const en = entryByPath.get(path);
-      quickSpawn(path, en ? en.name : null);
+      quickSpawn(path);
     }
   } catch (err) {
     toast(String(err));
@@ -2425,7 +2424,7 @@ function historyRowClick(e) {
     const path = target.dataset.path;
     if (target.dataset.action === 'spawn') {
       if (entryLongPressFired) { entryLongPressFired = false; return; }
-      quickSpawn(path, filesPathTail(path));
+      quickSpawn(path);
       return;
     }
     if (target.dataset.action === 'nav') navigateTo(path);
@@ -2657,8 +2656,10 @@ async function runSpawn(path, name, mode) {
   } catch (_) { /* toast shown by apiFetch */ }
 }
 
-function quickSpawn(path, name) {
-  runSpawn(path, name, 'auto');
+// No name is sent for plain spawns: the Claude app auto-titles the session
+// from the first prompt. Only "Custom name…" passes one.
+function quickSpawn(path) {
+  runSpawn(path, null, 'auto');
 }
 
 function openSpawnSheet(path, name) {
@@ -2676,14 +2677,14 @@ spawnCancelBtn.addEventListener('click', closeSpawnSheet);
 spawnOverlay.addEventListener('click', (e) => { if (e.target === spawnOverlay) closeSpawnSheet(); });
 
 spawnVisibleBtn.addEventListener('click', () => {
-  const p = spawnTargetPath, n = spawnTargetName;
+  const p = spawnTargetPath;
   closeSpawnSheet();
-  runSpawn(p, n, 'visible');
+  runSpawn(p, null, 'visible');
 });
 spawnHiddenBtn.addEventListener('click', () => {
-  const p = spawnTargetPath, n = spawnTargetName;
+  const p = spawnTargetPath;
   closeSpawnSheet();
-  runSpawn(p, n, 'hidden');
+  runSpawn(p, null, 'hidden');
 });
 spawnCustomBtn.addEventListener('click', async () => {
   const p = spawnTargetPath, n = spawnTargetName;
