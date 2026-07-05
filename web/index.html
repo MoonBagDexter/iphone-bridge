@@ -7,6 +7,29 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>iPhone Bridge</title>
   <style>
+    /* ============================================================================
+       FABLE DESIGN SYSTEM — iPhone Bridge / Files cockpit
+       ----------------------------------------------------------------------------
+       One coherent system, applied to every Files-tab surface. Bridge/PTT views
+       are loved as-is and only borrow the shared tokens where they already did.
+
+       SPACING (4px base) : --s1 .25rem  --s2 .4rem  --s3 .6rem  --s4 .9rem  --s5 1.2rem
+       RADII              : --r-sm .5rem (chips/badges)  --r-md .8rem (rows/inputs)
+                            --r-lg 1.1rem (cards/panels)  --r-pill 999px
+       TYPE               : section titles = 0.7rem / 700 / uppercase / +0.06em (--muted)
+                            body            = 0.92rem / 400–600
+                            meta / sub      = 0.72rem / --muted
+                            micro-badge     = 0.62rem / 700 / uppercase
+       ELEVATION          : one flat treatment — 1px --line border on --surface.
+                            Interactive surfaces lift on :active (accent border).
+       COLOR              : accent (green) used sparingly for "live / primary / here".
+                            danger (red) = kill / trash / delete.
+                            warn (amber) = dirty / modified.
+                            everything else is --muted. No third decorative hue.
+       ICONS              : inline SVG <symbol>s referenced via <use>. Single stroke
+                            width, currentColor, one .ic sizing class. Meaning-only.
+       MOTION             : --t-fast 150ms — sub-view + overlay enter/exit, no bounce.
+       ============================================================================ */
     :root {
       color-scheme: dark;
       --bg: #0a0a0a;
@@ -16,7 +39,30 @@
       --accent-dim: #166534;
       --idle: #27272a;
       --idle-bg: #18181b;
+
+      /* Semantic + systematized aliases (additive; nothing existing renamed). */
+      --surface: #18181b;      /* = --idle-bg: default card/row fill */
+      --surface-2: #202024;    /* one step up: nested / pressed contexts */
+      --line: #27272a;         /* = --idle: hairline borders */
+      --danger: #f87171;
+      --danger-line: #7f1d1d;
+      --danger-bg: rgba(127,29,29,0.18);
+      --warn: #fbbf24;
+      --warn-line: #78350f;
+      --spawn: #c084fc;        /* Claude-purple, only on spawn affordances */
+      --spawn-line: #581c87;
+
+      --s1: 0.25rem; --s2: 0.4rem; --s3: 0.6rem; --s4: 0.9rem; --s5: 1.2rem;
+      --r-sm: 0.5rem; --r-md: 0.8rem; --r-lg: 1.1rem; --r-pill: 999px;
+      --t-fast: 150ms;
     }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition-duration: 0.001ms !important; animation-duration: 0.001ms !important; }
+    }
+    /* The hidden attribute must always win, even over class display:flex/grid --
+       otherwise every JS-toggled surface (breadcrumbs, sub-views, overlays)
+       stays visible and stacks on top of the roots screen. */
+    [hidden] { display: none !important; }
     *, *::before, *::after {
       box-sizing: border-box;
       -webkit-tap-highlight-color: transparent;
@@ -200,6 +246,24 @@
       fill: none;
       stroke-width: 1.6;
     }
+
+    /* Shared Files-tab icon system: one size class, currentColor, single stroke
+       width. All glyphs are <use href="#ic-*"> into the sprite at end of <body>. */
+    .ic {
+      width: 1.15rem;
+      height: 1.15rem;
+      flex: 0 0 auto;
+      display: inline-block;
+      vertical-align: middle;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.7;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      pointer-events: none;
+    }
+    .ic-lg { width: 1.4rem; height: 1.4rem; }
+    .ic-sm { width: 0.95rem; height: 0.95rem; }
     .nav-btn-iconrow {
       display: flex;
       align-items: center;
@@ -375,9 +439,925 @@
     .mode-pill.active { background: var(--idle); color: var(--fg); }
 
     footer { padding-top: 0.2rem; font-size: 0.65rem; color: var(--muted); text-align: center; min-height: 0.9rem; }
+
+    /* ---- Files mode ---------------------------------------------------- */
+
+    #view-files { overflow: hidden; }
+    .files-scroll {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+
+    .files-section-title {
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding: 0 0.1rem;
+    }
+    /* Section header that carries a "see all ›" affordance on the right. */
+    .files-section-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: var(--s3);
+      padding: 0 0.1rem;
+      flex: 0 0 auto;
+    }
+    .files-section-head .files-section-title { padding: 0; }
+    .files-see-all {
+      flex: 0 0 auto;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 0.2rem 0.1rem;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.15rem;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .files-see-all:active { color: var(--accent); }
+    .files-see-all .ic { width: 0.85rem; height: 0.85rem; }
+
+    /* Sessions panel — the cockpit. Clear name, subtle uptime, live status via a
+       small dot (green = visible/alive, gray = hidden/gone), kill stays quiet
+       until armed. */
+    .sessions-panel {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      border-radius: var(--r-lg);
+      padding: var(--s3) var(--s3) var(--s2);
+      display: flex;
+      flex-direction: column;
+      gap: var(--s1);
+      flex: 0 0 auto;
+    }
+    .sessions-panel .files-section-title { padding-bottom: var(--s1); }
+    .session-row {
+      display: flex;
+      align-items: center;
+      gap: var(--s3);
+      min-height: 44px;
+      padding: var(--s2) var(--s1);
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .session-row:last-child { border-bottom: none; }
+    .session-row.dead { opacity: 0.5; }
+    /* Status dot: replaces the loud HIDDEN/VISIBLE pill. */
+    .session-dot {
+      flex: 0 0 auto;
+      width: 0.55rem;
+      height: 0.55rem;
+      border-radius: 50%;
+      background: var(--muted);
+    }
+    .session-dot.live { background: var(--accent); box-shadow: 0 0 0 3px rgba(74,222,128,0.14); }
+    .session-info { flex: 1; min-width: 0; }
+    .session-name { font-size: 0.9rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .session-meta { font-size: 0.72rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* Only "hidden" gets a whisper-quiet tag now; visible is implied by the dot. */
+    .session-tag {
+      flex: 0 0 auto;
+      font-size: 0.6rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .session-kill-btn {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 40px;
+      min-height: 32px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.3rem 0.6rem;
+      border-radius: var(--r-sm);
+      cursor: pointer;
+      transition: color var(--t-fast) ease, border-color var(--t-fast) ease, background var(--t-fast) ease;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .session-kill-btn:active { color: var(--danger); }
+    .files-muted-line { font-size: 0.8rem; color: var(--muted); padding: var(--s2) var(--s1); }
+
+    /* Chip row — a single horizontal shelf. Favorites (starred) lead, then
+       quick-access shortcuts, then Trash last. Merged into one visual row. */
+    .chip-row {
+      display: flex;
+      gap: var(--s2);
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-x;
+      padding: 0.1rem 0.1rem 0.15rem;
+    }
+    .chip-row::-webkit-scrollbar { display: none; }
+    .chip {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      max-width: 11rem;
+      padding: 0.4rem 0.7rem;
+      border-radius: var(--r-pill);
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--fg);
+      font: inherit;
+      font-size: 0.8rem;
+      font-weight: 600;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: border-color var(--t-fast) ease, color var(--t-fast) ease, background var(--t-fast) ease;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .chip .chip-label { overflow: hidden; text-overflow: ellipsis; }
+    .chip .ic { width: 0.9rem; height: 0.9rem; }
+    .chip:active { background: var(--surface-2); border-color: var(--accent); color: var(--accent); }
+    /* Favorites lead the shelf; the star carries the meaning, text stays --fg. */
+    .chip.chip-fav .ic { color: var(--warn); fill: var(--warn); stroke: var(--warn); }
+    /* Quick access: plain chips with a folder glyph. */
+    .chip.chip-shortcut { color: var(--fg); }
+    .chip.chip-shortcut .ic { color: var(--muted); }
+    .chip.chip-shortcut:active .ic { color: var(--accent); }
+    /* Trash pseudo-chip: distinct muted/red tint, always the trailing chip. */
+    .chip.chip-trash { border-color: var(--danger-line); color: var(--danger); background: var(--danger-bg); }
+    .chip.chip-trash:active { background: rgba(127,29,29,0.28); border-color: var(--danger); color: #fff; }
+
+    /* Breadcrumb bar */
+    .breadcrumb-row {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      flex: 0 0 auto;
+    }
+    .breadcrumb-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.15rem;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-x;
+      padding: 0.1rem 0.1rem;
+      flex: 1;
+      min-width: 0;
+    }
+    .breadcrumb-bar::-webkit-scrollbar { display: none; }
+    .current-fav-btn {
+      flex: 0 0 auto;
+      width: 2.4rem;
+      height: 2.4rem;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--muted);
+      border-radius: var(--r-pill);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: color var(--t-fast) ease, border-color var(--t-fast) ease, transform 80ms ease;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .current-fav-btn.fav-on { color: var(--warn); border-color: var(--warn-line); }
+    .current-fav-btn.fav-on .ic { fill: var(--warn); }
+    .current-fav-btn:active { transform: scale(0.92); }
+    .crumb-btn {
+      flex: 0 0 auto;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 0.85rem;
+      font-weight: 600;
+      padding: 0.3rem 0.4rem;
+      border-radius: var(--r-sm);
+      cursor: pointer;
+      white-space: nowrap;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.15rem;
+      transition: color var(--t-fast) ease, background var(--t-fast) ease;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    /* Deepest crumb = where you are: full-strength, accent. */
+    .crumb-btn:last-child { color: var(--fg); }
+    .crumb-btn.crumb-current { color: var(--accent); }
+    .crumb-btn:active { background: var(--surface-2); color: var(--fg); }
+    .crumb-btn .ic { width: 1rem; height: 1rem; }
+    .crumb-sep { color: var(--muted); font-size: 0.75rem; flex: 0 0 auto; opacity: 0.6; }
+
+    .files-new-folder-btn {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.35rem;
+      min-height: 40px;
+      border: 1px dashed var(--line);
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 0.82rem;
+      font-weight: 600;
+      padding: 0.5rem 0.7rem;
+      border-radius: var(--r-md);
+      cursor: pointer;
+      transition: border-color var(--t-fast) ease, color var(--t-fast) ease;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .files-new-folder-btn .ic { width: 1rem; height: 1rem; }
+    .files-new-folder-btn:active { border-color: var(--accent); color: var(--accent); }
+
+    /* Entry list — the workhorse. Name is primary; a leading type icon and
+       weight separate folders (bright, bold) from files (dimmer). Trailing
+       controls are quiet and right-aligned with ≥40px tap targets. */
+    .entry-list {
+      display: flex;
+      flex-direction: column;
+      gap: var(--s1);
+      /* Never grow: inside the .files-scroll column a stretched list opens a
+         dead gap between short sections (e.g. Recent vs the roots list). */
+      flex: 0 0 auto;
+      min-height: 0;
+    }
+    .entry-row {
+      display: flex;
+      align-items: center;
+      gap: var(--s3);
+      min-height: 48px;
+      padding: 0.55rem 0.5rem 0.55rem 0.65rem;
+      border-radius: var(--r-md);
+      border: 1px solid var(--line);
+      background: var(--surface);
+      cursor: pointer;
+      transition: border-color var(--t-fast) ease, background var(--t-fast) ease;
+    }
+    .entry-row:active { border-color: var(--accent); background: var(--surface-2); }
+    /* Leading type icon. Folders accent-neutral (bright), files muted. */
+    .entry-icon { flex: 0 0 auto; color: var(--muted); }
+    .entry-row .entry-icon.folder { color: var(--fg); }
+    .entry-row.entry-file-tappable .entry-name { color: var(--muted); font-weight: 400; }
+    .entry-row.entry-up { color: var(--muted); font-weight: 600; }
+    .entry-row.entry-up .entry-icon { color: var(--muted); }
+    .entry-name { flex: 1; min-width: 0; font-size: 0.92rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .entry-fav-star { flex: 0 0 auto; color: var(--warn); }
+    .entry-fav-star .ic { fill: var(--warn); }
+    .git-chip {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.2rem;
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      padding: 0.2rem 0.45rem;
+      border-radius: var(--r-pill);
+      border: 1px solid var(--line);
+      color: var(--muted);
+    }
+    .git-chip .ic { width: 0.75rem; height: 0.75rem; }
+    .git-chip.dirty { color: var(--warn); border-color: var(--warn-line); }
+    .entry-more-btn {
+      flex: 0 0 auto;
+      width: 40px;
+      height: 40px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .entry-more-btn:active { color: var(--accent); }
+
+    /* Trash view rows */
+    .trash-row {
+      display: flex;
+      align-items: center;
+      gap: var(--s3);
+      min-height: 48px;
+      padding: 0.55rem 0.65rem;
+      border-radius: var(--r-md);
+      border: 1px solid var(--line);
+      background: var(--surface);
+    }
+    .trash-icon { flex: 0 0 auto; color: var(--muted); align-self: flex-start; margin-top: 0.15rem; }
+    .trash-row.trash-dir .trash-name { opacity: 0.75; }
+    .trash-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+    .trash-name { font-size: 0.92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .trash-meta {
+      font-size: 0.72rem;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      /* Ellipsize the middle-or-start so the tail (most identifying part of
+         the original path) stays visible -- direction: rtl + a leading
+         embed keeps the visual ellipsis on the left while text stays LTR. */
+      direction: rtl;
+      text-align: left;
+      unicode-bidi: plaintext;
+    }
+    .trash-size {
+      flex: 0 0 auto;
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+    .trash-restore-btn {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      min-height: 40px;
+      border: 1px solid var(--accent-dim);
+      background: rgba(22,101,52,0.28);
+      color: var(--accent);
+      font: inherit;
+      font-size: 0.78rem;
+      font-weight: 700;
+      padding: 0.4rem 0.7rem;
+      border-radius: var(--r-sm);
+      cursor: pointer;
+      transition: background var(--t-fast) ease;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .trash-restore-btn .ic { width: 0.95rem; height: 0.95rem; }
+    .trash-restore-btn:active { background: var(--accent); color: #052e16; }
+
+    /* Generic centered overlay: PIN entry, prompt-style input, action sheet, confirms.
+       Fast, subtle enter: backdrop fades, card slides/scales in ~150ms, no bounce. */
+    .overlay-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      z-index: 2000;
+      padding: 0.6rem;
+      padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.6rem);
+      padding-top: calc(env(safe-area-inset-top, 0px) + 0.6rem);
+      animation: overlay-fade var(--t-fast) ease;
+    }
+    .overlay-backdrop.center { align-items: center; }
+    .overlay-backdrop[hidden] { display: none; }
+    @keyframes overlay-fade { from { opacity: 0; } to { opacity: 1; } }
+    .overlay-card {
+      width: 100%;
+      max-width: 26rem;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--r-lg);
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.65rem;
+      animation: overlay-rise var(--t-fast) cubic-bezier(0.2, 0.8, 0.3, 1);
+    }
+    .overlay-backdrop.center .overlay-card { animation-name: overlay-pop; }
+    @keyframes overlay-rise { from { transform: translateY(1.2rem); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    @keyframes overlay-pop { from { transform: scale(0.97); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    /* Drag-affordance grip for the big bottom-rising sheets (peek/viewer). */
+    .sheet-grip {
+      width: 2.4rem;
+      height: 0.28rem;
+      border-radius: var(--r-pill);
+      background: var(--line);
+      margin: -0.25rem auto 0.15rem;
+      flex: 0 0 auto;
+    }
+    .overlay-title { font-size: 1rem; font-weight: 700; }
+    .overlay-hint { font-size: 0.78rem; color: var(--muted); line-height: 1.35; }
+    .overlay-input {
+      width: 100%;
+      padding: 0.7rem 0.8rem;
+      border-radius: var(--r-md);
+      border: 1px solid var(--line);
+      background: var(--bg);
+      color: var(--fg);
+      font: inherit;
+      font-size: 1rem;
+      transition: border-color var(--t-fast) ease;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .overlay-input:focus { outline: none; border-color: var(--accent); }
+    /* iOS-passcode style PIN pad. Vertically centered within the viewport on
+       tall screens via auto margins, so the dots don't crowd the top. */
+    .pin-pad-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1.1rem;
+      padding: 1.2rem 0;
+      margin: auto 0;
+    }
+    .pin-sub { font-size: 0.8rem; color: var(--muted); min-height: 1em; }
+    .pin-dots { display: flex; gap: 1.05rem; }
+    .pin-dot {
+      width: 0.8rem;
+      height: 0.8rem;
+      border-radius: 50%;
+      border: 1px solid var(--fg);
+      transition: background 0.12s ease;
+    }
+    .pin-dot.filled { background: var(--fg); }
+    .pin-dots.shake { animation: pin-shake 0.4s; }
+    @keyframes pin-shake {
+      0%, 100% { transform: translateX(0); }
+      20% { transform: translateX(-0.8rem); }
+      40% { transform: translateX(0.7rem); }
+      60% { transform: translateX(-0.5rem); }
+      80% { transform: translateX(0.3rem); }
+    }
+    .pin-pad {
+      display: grid;
+      grid-template-columns: repeat(3, 4.6rem);
+      gap: 1rem 1.4rem;
+      justify-items: center;
+      margin-top: 0.4rem;
+    }
+    .pin-key {
+      width: 4.6rem;
+      height: 4.6rem;
+      border-radius: 50%;
+      border: 1px solid var(--idle);
+      background: rgba(255,255,255,0.07);
+      color: var(--fg);
+      font: inherit;
+      font-size: 1.9rem;
+      font-weight: 400;
+      line-height: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.15rem;
+      cursor: pointer;
+      -webkit-appearance: none;
+      appearance: none;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: manipulation;
+    }
+    .pin-key:active { background: rgba(255,255,255,0.28); }
+    .pin-letters {
+      font-size: 0.58rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      min-height: 0.7em;
+    }
+    .pin-key-del { font-size: 1.4rem; border: none; background: transparent; }
+    .pin-key-del:active { background: rgba(255,255,255,0.12); }
+    .pin-key-spacer { width: 4.6rem; height: 4.6rem; }
+    .overlay-btn-row { display: flex; gap: 0.5rem; }
+    .overlay-btn {
+      flex: 1;
+      min-height: 44px;
+      padding: 0.65rem 0;
+      border-radius: var(--r-md);
+      border: 1px solid var(--line);
+      background: var(--surface-2);
+      color: var(--fg);
+      font: inherit;
+      font-size: 0.92rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 80ms ease;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .overlay-btn.primary { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+    .overlay-btn.danger { border-color: var(--danger-line); background: var(--danger-bg); color: var(--danger); }
+    .overlay-btn:active { transform: scale(0.98); }
+    .overlay-sheet-item {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      width: 100%;
+      min-height: 44px;
+      text-align: left;
+      padding: 0.7rem 0.5rem;
+      border-radius: var(--r-sm);
+      border: none;
+      background: transparent;
+      color: var(--fg);
+      font: inherit;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .overlay-sheet-item .ic { color: var(--muted); }
+    .overlay-sheet-item:active { background: var(--surface-2); }
+    .overlay-sheet-item.danger { color: var(--danger); }
+    .overlay-sheet-item.danger .ic { color: var(--danger); }
+    .overlay-sheet-item.fav-on { color: var(--warn); }
+    .overlay-sheet-item.fav-on .ic { color: var(--warn); fill: var(--warn); }
+
+    .files-loading-line { font-size: 0.85rem; color: var(--muted); padding: 0.5rem 0.1rem; }
+
+    /* Pull-to-refresh hint */
+    .ptr-hint {
+      flex: 0 0 auto;
+      text-align: center;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--muted);
+      padding: 0.2rem 0;
+      letter-spacing: 0.02em;
+    }
+    .ptr-hint.armed { color: var(--accent); }
+
+    /* Prominent "Start Claude here" for the current folder — the one purple CTA. */
+    .files-start-here-btn {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.45rem;
+      min-height: 44px;
+      border: 1px solid var(--spawn-line);
+      background: rgba(88, 28, 135, 0.22);
+      color: var(--spawn);
+      font: inherit;
+      font-size: 0.95rem;
+      font-weight: 700;
+      padding: 0.7rem 0.8rem;
+      border-radius: var(--r-md);
+      cursor: pointer;
+      transition: background var(--t-fast) ease, border-color var(--t-fast) ease;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .files-start-here-btn .ic { fill: currentColor; }
+    .files-start-here-btn:active { background: rgba(88, 28, 135, 0.4); border-color: var(--spawn); }
+
+    /* Browsing header row: New folder / Upload / Sort */
+    .files-header-row { display: flex; gap: 0.4rem; align-items: center; flex: 0 0 auto; }
+    .files-header-row .files-new-folder-btn { flex: 1; }
+    .files-sort-btn {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      min-height: 40px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--muted);
+      font: inherit;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      padding: 0.5rem 0.7rem;
+      border-radius: var(--r-md);
+      cursor: pointer;
+      transition: border-color var(--t-fast) ease, color var(--t-fast) ease;
+      -webkit-appearance: none;
+      appearance: none;
+      white-space: nowrap;
+    }
+    .files-sort-btn .ic { width: 1rem; height: 1rem; }
+    .files-sort-btn:active { border-color: var(--accent); color: var(--accent); }
+
+    /* Search input + Search-all row. A leading magnifier sits inside the field. */
+    .files-search-row { display: flex; align-items: center; gap: 0.35rem; flex: 0 0 auto; position: relative; }
+    .files-search-icon {
+      position: absolute;
+      left: 0.65rem;
+      color: var(--muted);
+      pointer-events: none;
+    }
+    .files-search-input {
+      flex: 1;
+      min-width: 0;
+      min-height: 40px;
+      padding: 0.55rem 2rem 0.55rem 2.15rem;
+      border-radius: var(--r-md);
+      border: 1px solid var(--line);
+      background: var(--bg);
+      color: var(--fg);
+      font: inherit;
+      font-size: 0.9rem;
+      transition: border-color var(--t-fast) ease;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .files-search-input:focus { outline: none; border-color: var(--accent); }
+    /* The custom clear button replaces the native search-field X (two X's overlap). */
+    .files-search-input::-webkit-search-cancel-button,
+    .files-search-input::-webkit-search-decoration { -webkit-appearance: none; appearance: none; display: none; }
+    .files-search-input:focus + .files-search-icon { color: var(--accent); }
+    .files-search-clear {
+      position: absolute;
+      right: 0.5rem;
+      width: 1.7rem;
+      height: 1.7rem;
+      border: none;
+      background: var(--surface-2);
+      color: var(--fg);
+      border-radius: var(--r-pill);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .files-search-clear .ic { width: 0.85rem; height: 0.85rem; }
+    .files-search-all-btn {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      min-height: 40px;
+      text-align: left;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--accent);
+      font: inherit;
+      font-size: 0.85rem;
+      font-weight: 600;
+      padding: 0.55rem 0.7rem;
+      border-radius: var(--r-md);
+      cursor: pointer;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .files-search-all-btn .ic { color: var(--accent); }
+    .files-search-all-btn:active { background: var(--surface-2); }
+
+    /* Per-row spawn button (folders): the one purple accent, meaning "run here". */
+    .entry-spawn-btn {
+      flex: 0 0 auto;
+      width: 40px;
+      height: 40px;
+      border: none;
+      background: transparent;
+      color: var(--spawn);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 80ms ease, color var(--t-fast) ease;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .entry-spawn-btn .ic { fill: currentColor; }
+    .entry-spawn-btn:active { color: #e9d5ff; transform: scale(0.9); }
+    .git-chip.tappable { cursor: pointer; }
+    .git-chip.tappable:active { border-color: var(--accent); color: var(--accent); }
+
+    /* History sub-view + root "Recent" rows. A history row is a proper list
+       entry: folder name (primary), dim parent path, relative last-visited time,
+       one-tap navigate + the standard row spawn button. */
+    .history-row {
+      display: flex;
+      align-items: center;
+      gap: var(--s3);
+      min-height: 52px;
+      padding: 0.5rem 0.5rem 0.5rem 0.65rem;
+      border-radius: var(--r-md);
+      border: 1px solid var(--line);
+      background: var(--surface);
+      cursor: pointer;
+      transition: border-color var(--t-fast) ease, background var(--t-fast) ease;
+    }
+    .history-row:active { border-color: var(--accent); background: var(--surface-2); }
+    .history-icon { flex: 0 0 auto; color: var(--fg); }
+    .history-namewrap { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+    .history-name { font-size: 0.92rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .history-sub {
+      font-size: 0.68rem;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      direction: rtl;
+      text-align: left;
+      unicode-bidi: plaintext;
+    }
+    .history-ago { flex: 0 0 auto; font-size: 0.68rem; color: var(--muted); }
+    /* Sub-view enter: a fast, subtle slide+fade, no bounce. Applied to the
+       trash + history lists when they become the active surface. */
+    .subview-enter { animation: subview-in var(--t-fast) ease; }
+    @keyframes subview-in { from { opacity: 0; transform: translateY(0.5rem); } to { opacity: 1; transform: translateY(0); } }
+    /* One muted empty-state pattern: a small icon over a short line. */
+    .files-empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 2rem 1rem;
+      color: var(--muted);
+      text-align: center;
+    }
+    .files-empty .ic { width: 1.8rem; height: 1.8rem; opacity: 0.7; }
+    .files-empty-text { font-size: 0.82rem; }
+    /* One skeleton/loading shimmer for list surfaces. */
+    .files-skeleton { display: flex; flex-direction: column; gap: var(--s1); padding: 0.1rem 0; }
+    .skel-row {
+      height: 48px;
+      border-radius: var(--r-md);
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(100deg, var(--surface) 30%, var(--surface-2) 50%, var(--surface) 70%);
+      background-size: 200% 100%;
+      animation: skel-shimmer 1.1s ease-in-out infinite;
+    }
+    @keyframes skel-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+    /* Search-result rows: name + dim parent path */
+    .search-row .entry-sub {
+      font-size: 0.68rem;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      direction: rtl;
+      text-align: left;
+      unicode-bidi: plaintext;
+    }
+    .search-row .entry-namewrap { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.05rem; }
+    .search-icon { flex: 0 0 auto; color: var(--muted); }
+    .search-count { font-size: 0.72rem; color: var(--muted); padding: 0.2rem 0.1rem; }
+
+    /* Session row: whole row tappable for peek (kill button stops propagation) */
+    .session-info { cursor: pointer; }
+    .session-kill-btn.armed {
+      background: var(--danger-bg);
+      color: var(--danger);
+      border-color: var(--danger-line);
+    }
+    .session-row.killing { opacity: 0.4; pointer-events: none; }
+
+    /* Git glance sheet list */
+    .git-list { display: flex; flex-direction: column; gap: 0.3rem; max-height: 55vh; overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
+    .git-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0.1rem; }
+    .git-status {
+      flex: 0 0 auto;
+      font-size: 0.62rem;
+      font-weight: 800;
+      padding: 0.12rem 0.4rem;
+      border-radius: 0.4rem;
+      min-width: 1.6rem;
+      text-align: center;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    .git-status.amber { color: #fbbf24; background: rgba(120,53,15,0.4); }
+    .git-status.green { color: var(--accent); background: rgba(22,101,52,0.4); }
+    .git-status.red { color: #f87171; background: rgba(127,29,29,0.4); }
+    .git-status.gray { color: var(--muted); background: rgba(255,255,255,0.06); }
+    .git-path { flex: 1; min-width: 0; font-size: 0.78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; unicode-bidi: plaintext; }
+
+    /* Session peek + file viewer big overlays */
+    .peek-card, .viewer-card { max-height: 82vh; }
+    .peek-head, .viewer-head { display: flex; align-items: flex-start; gap: 0.5rem; }
+    .peek-head .overlay-title, .viewer-head .viewer-titlewrap { flex: 1; min-width: 0; }
+    .viewer-titlewrap .overlay-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .viewer-sub { font-size: 0.72rem; color: var(--muted); }
+    .peek-x {
+      flex: 0 0 auto;
+      width: 2.4rem;
+      height: 2.4rem;
+      border: none;
+      background: var(--surface-2);
+      color: var(--fg);
+      border-radius: var(--r-pill);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background var(--t-fast) ease;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .peek-x:active { background: var(--line); }
+    .peek-body {
+      max-height: 60vh;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      padding: 0.2rem 0.1rem;
+    }
+    .peek-line { font-size: 0.82rem; line-height: 1.35; white-space: pre-wrap; word-break: break-word; }
+    .peek-line.dim { color: var(--muted); font-size: 0.75rem; }
+    .peek-line .peek-prefix { color: var(--accent); font-weight: 700; margin-right: 0.3rem; }
+    .peek-empty { font-size: 0.82rem; color: var(--muted); padding: 0.4rem 0.1rem; }
+
+    .viewer-body {
+      max-height: 62vh;
+      overflow: auto;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .viewer-body pre {
+      margin: 0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.75rem;
+      line-height: 1.4;
+      white-space: pre;
+      color: var(--fg);
+      user-select: text;
+      -webkit-user-select: text;
+    }
+    .viewer-body img { max-width: 100%; height: auto; border-radius: 0.5rem; }
+    .viewer-note { font-size: 0.78rem; color: var(--muted); padding: 0.3rem 0.1rem; }
   </style>
 </head>
 <body>
+  <!-- Icon sprite: one source of truth for every Files-tab glyph. currentColor,
+       single stroke width via .ic. Referenced with <use href="#ic-*">. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="ic-folder" viewBox="0 0 24 24">
+        <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+      </symbol>
+      <symbol id="ic-file" viewBox="0 0 24 24">
+        <path d="M6 3h8l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/>
+        <path d="M14 3v4h4"/>
+      </symbol>
+      <symbol id="ic-play" viewBox="0 0 24 24">
+        <path d="M8 5.5v13l11-6.5z"/>
+      </symbol>
+      <symbol id="ic-upload" viewBox="0 0 24 24">
+        <path d="M12 16V5"/><path d="M7 10l5-5 5 5"/><path d="M5 19h14"/>
+      </symbol>
+      <symbol id="ic-more" viewBox="0 0 24 24">
+        <circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none"/>
+        <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/>
+        <circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none"/>
+      </symbol>
+      <symbol id="ic-trash" viewBox="0 0 24 24">
+        <path d="M4 7h16"/><path d="M9 7V4h6v3"/>
+        <path d="M6.5 7l1 13a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1l1-13"/>
+      </symbol>
+      <symbol id="ic-chevron-left" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+      <symbol id="ic-chevron-right" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
+      <symbol id="ic-search" viewBox="0 0 24 24">
+        <circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>
+      </symbol>
+      <symbol id="ic-git" viewBox="0 0 24 24">
+        <circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8" r="2.4"/>
+        <path d="M6 8.4v7.2"/><path d="M18 10.4c0 3.4-2.8 4.6-6 5.2"/>
+      </symbol>
+      <symbol id="ic-x" viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></symbol>
+      <symbol id="ic-restore" viewBox="0 0 24 24">
+        <path d="M4 12a8 8 0 1 1 2.5 5.8"/><path d="M4 8v4h4"/>
+      </symbol>
+      <symbol id="ic-star" viewBox="0 0 24 24">
+        <path d="M12 4l2.4 5 5.4.7-4 3.7 1 5.3-4.8-2.7-4.8 2.7 1-5.3-4-3.7 5.4-.7z"/>
+      </symbol>
+      <symbol id="ic-clock" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 2"/>
+      </symbol>
+      <symbol id="ic-plus" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></symbol>
+      <symbol id="ic-sort" viewBox="0 0 24 24">
+        <path d="M7 5v14"/><path d="M4 8l3-3 3 3"/><path d="M17 19V5"/><path d="M14 16l3 3 3-3"/>
+      </symbol>
+      <symbol id="ic-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5" fill="currentColor" stroke="none"/></symbol>
+      <symbol id="ic-terminal" viewBox="0 0 24 24">
+        <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/>
+      </symbol>
+    </defs>
+  </svg>
+
   <div id="view-bridge" class="view">
     <button id="audio-btn" class="toggle" type="button">
       <span class="label">Audio Out</span>
@@ -493,11 +1473,245 @@
     <button id="key-space" class="space-btn" type="button">&#x2423; space</button>
   </div>
 
+  <div id="view-files" class="view" hidden>
+    <div class="files-scroll" id="files-scroll">
+      <div class="ptr-hint" id="ptr-hint" hidden>pull to refresh</div>
+      <div class="sessions-panel" id="sessions-panel">
+        <div class="files-section-title">Running Claude sessions</div>
+        <div id="sessions-list"></div>
+      </div>
+
+      <!-- One merged chip shelf: favorites (starred) first, then quick-access
+           shortcuts, then Trash. Built in JS. -->
+      <div id="chips-shortcuts" class="chip-row" hidden></div>
+
+      <!-- Root "Recent" section: top-5 history rows + a "see all" affordance
+           into the full History sub-view. Built in JS. -->
+      <div class="files-section-head" id="recent-head" hidden>
+        <div class="files-section-title">Recent</div>
+        <button id="recent-see-all-btn" class="files-see-all" type="button">
+          see all <svg class="ic" aria-hidden="true"><use href="#ic-chevron-right"/></svg>
+        </button>
+      </div>
+      <div class="entry-list" id="recent-list" hidden></div>
+
+      <div class="breadcrumb-row" id="breadcrumb-row" hidden>
+        <div class="breadcrumb-bar" id="breadcrumb-bar"></div>
+        <button id="current-fav-btn" class="current-fav-btn" type="button" aria-label="Favorite this folder">
+          <svg class="ic" aria-hidden="true"><use href="#ic-star"/></svg>
+        </button>
+      </div>
+
+      <!-- Prominent one-tap "start here" for the folder being browsed. -->
+      <button id="files-start-here-btn" class="files-start-here-btn" type="button" hidden>
+        <svg class="ic" aria-hidden="true"><use href="#ic-play"/></svg> Start Claude here
+      </button>
+
+      <!-- Browsing header: New folder + Upload, and a sort toggle. -->
+      <div class="files-header-row" id="files-header-row" hidden>
+        <button id="files-new-folder-btn" class="files-new-folder-btn" type="button">
+          <svg class="ic" aria-hidden="true"><use href="#ic-plus"/></svg> New folder
+        </button>
+        <button id="files-upload-btn" class="files-new-folder-btn" type="button">
+          <svg class="ic" aria-hidden="true"><use href="#ic-upload"/></svg> Upload
+        </button>
+        <button id="files-sort-btn" class="files-sort-btn" type="button" aria-label="Change sort order">
+          <svg class="ic" aria-hidden="true"><use href="#ic-sort"/></svg> <span id="files-sort-label">Name</span>
+        </button>
+      </div>
+      <input id="files-upload-input" type="file" multiple hidden>
+
+      <!-- As-you-type filter of the current folder + deep-search entry.
+           Icon comes AFTER the input in DOM so :focus + sibling styling works. -->
+      <div class="files-search-row" id="files-search-row" hidden>
+        <input id="files-search-input" class="files-search-input" type="search"
+               placeholder="Filter this folder…" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <svg class="ic files-search-icon" aria-hidden="true"><use href="#ic-search"/></svg>
+        <button id="files-search-clear" class="files-search-clear" type="button" hidden aria-label="Clear search">
+          <svg class="ic" aria-hidden="true"><use href="#ic-x"/></svg>
+        </button>
+      </div>
+      <button id="files-search-all-btn" class="files-search-all-btn" type="button" hidden></button>
+
+      <div class="entry-list" id="entry-list"></div>
+      <div class="entry-list" id="search-results" hidden></div>
+
+      <!-- Trash sub-view: shown instead of the breadcrumb/entry-list above
+           when browsing Trash. Reuses .files-scroll as the outer scroller. -->
+      <div class="breadcrumb-row" id="trash-breadcrumb-row" hidden>
+        <div class="breadcrumb-bar">
+          <button id="trash-back-btn" class="crumb-btn" type="button">
+            <svg class="ic" aria-hidden="true"><use href="#ic-chevron-left"/></svg> Roots
+          </button>
+          <span class="crumb-sep">/</span>
+          <button class="crumb-btn crumb-current" type="button" disabled>Trash</button>
+        </div>
+      </div>
+      <div class="entry-list" id="trash-list" hidden></div>
+
+      <!-- History sub-view: full recently-visited folder list. Same back-nav +
+           hidden-state discipline as Trash (see subViewVisibility). -->
+      <div class="breadcrumb-row" id="history-breadcrumb-row" hidden>
+        <div class="breadcrumb-bar">
+          <button id="history-back-btn" class="crumb-btn" type="button">
+            <svg class="ic" aria-hidden="true"><use href="#ic-chevron-left"/></svg> Roots
+          </button>
+          <span class="crumb-sep">/</span>
+          <button class="crumb-btn crumb-current" type="button" disabled>History</button>
+        </div>
+      </div>
+      <div class="entry-list" id="history-list" hidden></div>
+    </div>
+  </div>
+
+  <!-- PIN overlay: shown on first 401, blocks everything until unlocked.
+       iOS-passcode style: digit keypad + dots, auto-submits on the 6th digit. -->
+  <div id="pin-overlay" class="overlay-backdrop center" hidden>
+    <div class="pin-pad-wrap">
+      <div class="overlay-title">Enter Bridge PIN</div>
+      <div id="pin-sub" class="pin-sub">&nbsp;</div>
+      <div id="pin-dots" class="pin-dots">
+        <span class="pin-dot"></span><span class="pin-dot"></span><span class="pin-dot"></span>
+        <span class="pin-dot"></span><span class="pin-dot"></span><span class="pin-dot"></span>
+      </div>
+      <div id="pin-pad" class="pin-pad">
+        <button class="pin-key" type="button" data-digit="1">1<span class="pin-letters">&nbsp;</span></button>
+        <button class="pin-key" type="button" data-digit="2">2<span class="pin-letters">ABC</span></button>
+        <button class="pin-key" type="button" data-digit="3">3<span class="pin-letters">DEF</span></button>
+        <button class="pin-key" type="button" data-digit="4">4<span class="pin-letters">GHI</span></button>
+        <button class="pin-key" type="button" data-digit="5">5<span class="pin-letters">JKL</span></button>
+        <button class="pin-key" type="button" data-digit="6">6<span class="pin-letters">MNO</span></button>
+        <button class="pin-key" type="button" data-digit="7">7<span class="pin-letters">PQRS</span></button>
+        <button class="pin-key" type="button" data-digit="8">8<span class="pin-letters">TUV</span></button>
+        <button class="pin-key" type="button" data-digit="9">9<span class="pin-letters">WXYZ</span></button>
+        <span class="pin-key-spacer"></span>
+        <button class="pin-key" type="button" data-digit="0">0</button>
+        <button class="pin-key pin-key-del" type="button" data-del="1">⌫</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Generic prompt overlay: used for new-folder name and rename. -->
+  <div id="prompt-overlay" class="overlay-backdrop center" hidden>
+    <div class="overlay-card">
+      <div class="overlay-title" id="prompt-title">Name</div>
+      <input id="prompt-input" class="overlay-input" type="text" autocomplete="off">
+      <div class="overlay-btn-row">
+        <button id="prompt-cancel-btn" class="overlay-btn" type="button">Cancel</button>
+        <button id="prompt-ok-btn" class="overlay-btn primary" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Generic confirm overlay: delete entry / kill session. -->
+  <div id="confirm-overlay" class="overlay-backdrop center" hidden>
+    <div class="overlay-card">
+      <div class="overlay-title" id="confirm-title">Are you sure?</div>
+      <div class="overlay-btn-row">
+        <button id="confirm-cancel-btn" class="overlay-btn" type="button">Cancel</button>
+        <button id="confirm-ok-btn" class="overlay-btn danger" type="button">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Action sheet: per-entry "..." menu. -->
+  <div id="sheet-overlay" class="overlay-backdrop" hidden>
+    <div class="overlay-card">
+      <div class="sheet-grip"></div>
+      <div class="overlay-title" id="sheet-title">Entry</div>
+      <button id="sheet-new-folder" class="overlay-sheet-item" type="button">
+        <svg class="ic" aria-hidden="true"><use href="#ic-plus"/></svg> New folder inside
+      </button>
+      <button id="sheet-rename" class="overlay-sheet-item" type="button">
+        <svg class="ic" aria-hidden="true"><use href="#ic-file"/></svg> Rename
+      </button>
+      <button id="sheet-favorite" class="overlay-sheet-item" type="button">
+        <svg class="ic" aria-hidden="true"><use href="#ic-star"/></svg> <span id="sheet-favorite-label">Favorite</span>
+      </button>
+      <button id="sheet-delete" class="overlay-sheet-item danger" type="button">
+        <svg class="ic" aria-hidden="true"><use href="#ic-trash"/></svg> Delete
+      </button>
+      <button id="sheet-cancel" class="overlay-sheet-item" type="button">
+        <svg class="ic" aria-hidden="true"><use href="#ic-x"/></svg> Cancel
+      </button>
+    </div>
+  </div>
+
+  <!-- Spawn options sheet (long-press on a spawn button): visible / hidden /
+       custom name. A plain tap on a spawn button skips this and runs mode:auto. -->
+  <div id="spawn-overlay" class="overlay-backdrop" hidden>
+    <div class="overlay-card">
+      <div class="sheet-grip"></div>
+      <div class="overlay-title" id="spawn-sheet-title">Start Claude</div>
+      <button id="spawn-visible-btn" class="overlay-sheet-item" type="button">
+        <svg class="ic" aria-hidden="true"><use href="#ic-terminal"/></svg> Start visible
+      </button>
+      <button id="spawn-hidden-btn" class="overlay-sheet-item" type="button">
+        <svg class="ic" aria-hidden="true"><use href="#ic-play"/></svg> Start hidden
+      </button>
+      <button id="spawn-custom-btn" class="overlay-sheet-item" type="button">
+        <svg class="ic" aria-hidden="true"><use href="#ic-file"/></svg> Custom name…
+      </button>
+      <button id="spawn-cancel-btn" class="overlay-sheet-item" type="button">
+        <svg class="ic" aria-hidden="true"><use href="#ic-x"/></svg> Cancel
+      </button>
+    </div>
+  </div>
+
+  <!-- Git glance sheet: /api/gitchanges for the tapped repo. -->
+  <div id="git-overlay" class="overlay-backdrop" hidden>
+    <div class="overlay-card">
+      <div class="overlay-title" id="git-title">Changes</div>
+      <div id="git-list" class="git-list"></div>
+      <div class="overlay-btn-row">
+        <button id="git-close-btn" class="overlay-btn" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Session peek overlay: live "what's it doing" transcript tail. -->
+  <div id="peek-overlay" class="overlay-backdrop center" hidden>
+    <div class="overlay-card peek-card">
+      <div class="sheet-grip"></div>
+      <div class="peek-head">
+        <div class="overlay-title" id="peek-title">Session</div>
+        <button id="peek-close-btn" class="peek-x" type="button" aria-label="Close">
+          <svg class="ic ic-lg" aria-hidden="true"><use href="#ic-x"/></svg>
+        </button>
+      </div>
+      <div id="peek-body" class="peek-body"></div>
+      <div class="overlay-btn-row">
+        <button id="peek-kill-btn" class="overlay-btn danger" type="button">Kill</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- File viewer overlay: text / image / no-preview + download. -->
+  <div id="viewer-overlay" class="overlay-backdrop center" hidden>
+    <div class="overlay-card viewer-card">
+      <div class="sheet-grip"></div>
+      <div class="viewer-head">
+        <div class="viewer-titlewrap">
+          <div class="overlay-title" id="viewer-title">File</div>
+          <div class="viewer-sub" id="viewer-sub"></div>
+        </div>
+        <button id="viewer-close-btn" class="peek-x" type="button" aria-label="Close">
+          <svg class="ic ic-lg" aria-hidden="true"><use href="#ic-x"/></svg>
+        </button>
+      </div>
+      <div id="viewer-body" class="viewer-body"></div>
+      <div class="overlay-btn-row">
+        <button id="viewer-download-btn" class="overlay-btn primary" type="button">Download</button>
+      </div>
+    </div>
+  </div>
+
   <div class="bottom-bar">
     <button id="key-clear" class="clear-btn" type="button" aria-label="Send /clear">/clear</button>
     <div class="mode-switch">
       <button id="mode-bridge" class="mode-pill active" type="button">Bridge</button>
       <button id="mode-ptt" class="mode-pill" type="button">PTT</button>
+      <button id="mode-files" class="mode-pill" type="button">Files</button>
     </div>
     <button id="refresh-btn" class="refresh-btn" type="button" aria-label="Reload page">&#x21BB;</button>
   </div>

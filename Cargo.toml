@@ -7,17 +7,26 @@ edition = "2021"
 wasapi = "0.23"
 anyhow = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "signal", "time"] }
-axum = { version = "0.8", features = ["ws"] }
+axum = { version = "0.8", features = ["ws", "multipart"] }
 axum-server = { version = "0.8", features = ["tls-rustls"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 rcgen = "0.14"
+x509-parser = "0.18"
+pem = "3"
+time = "0.3"
 futures-util = "0.3"
 local-ip-address = "0.6"
 bytes = "1"
 tray-icon = "0.21"
 arboard = "3"
 winreg = "0.55"
-windows-sys = { version = "0.60", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_Foundation"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dunce = "1"
+base64 = "0.22"
+rfd = "0.15.4"
+tokio-util = { version = "0.7", features = ["io"] }
+windows-sys = { version = "0.60", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_Foundation", "Win32_UI_Shell", "Win32_System_Threading", "Win32_Storage_FileSystem"] }
 
 [profile.release]
 lto = "thin"

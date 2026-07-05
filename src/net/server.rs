@@ -1,18 +1,29 @@
 use anyhow::Result;
-use axum::{routing::get, Router};
+use axum::{
+    routing::{get, post},
+    Router,
+};
 use axum_server::tls_rustls::RustlsConfig;
 use bytes::Bytes;
 use std::net::SocketAddr;
 use std::path::Path;
+use std::sync::{Arc, RwLock};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::audio::render::MicMsg;
+use crate::files::api as files_api;
+use crate::files::config::Config;
+use crate::files::sessions::SessionStore;
 use crate::net::ws::{ws_audio, ws_mic};
 
 #[derive(Clone)]
 pub struct AppState {
     pub audio_tx: broadcast::Sender<Bytes>,
     pub mic_tx: mpsc::Sender<MicMsg>,
+    /// Files-feature config (PIN, scope, roots); persisted on every change.
+    pub config: Arc<RwLock<Config>>,
+    /// Live Claude Code sessions spawned via `/api/spawn`.
+    pub sessions: Arc<SessionStore>,
 }
 
 const INDEX_HTML: &str = include_str!("../../web/index.html");
@@ -49,8 +60,52 @@ async fn mic_worklet_js() -> StaticResponse {
     static_response("application/javascript", MIC_WORKLET_JS)
 }
 
-fn router(audio_tx: broadcast::Sender<Bytes>, mic_tx: mpsc::Sender<MicMsg>) -> Router {
-    let state = AppState { audio_tx, mic_tx };
+fn router(
+    audio_tx: broadcast::Sender<Bytes>,
+    mic_tx: mpsc::Sender<MicMsg>,
+    config: Arc<RwLock<Config>>,
+    sessions: Arc<SessionStore>,
+) -> Router {
+    let state = AppState {
+        audio_tx,
+        mic_tx,
+        config,
+        sessions,
+    };
+
+    // Files API: every `/api/*` route is gated by the PIN middleware. The
+    // audio/mic WS and static routes stay unauthenticated (as today).
+    // The upload route needs a larger body limit than axum's default (2 MB for
+    // multipart); scope the 200 MB `DefaultBodyLimit` to just that route.
+    let upload_route = Router::new()
+        .route("/api/upload", post(files_api::upload))
+        .layer(axum::extract::DefaultBodyLimit::max(
+            files_api::UPLOAD_BODY_LIMIT,
+        ));
+
+    let api = Router::new()
+        .route("/api/roots", get(files_api::roots))
+        .route("/api/ls", get(files_api::ls))
+        .route("/api/gitstatus", get(files_api::gitstatus))
+        .route("/api/mkdir", post(files_api::mkdir))
+        .route("/api/rename", post(files_api::rename))
+        .route("/api/delete", post(files_api::delete))
+        .route("/api/spawn", post(files_api::spawn))
+        .route("/api/sessions", get(files_api::list_sessions))
+        .route("/api/kill", post(files_api::kill))
+        .route("/api/trash", get(files_api::list_trash))
+        .route("/api/trash/restore", post(files_api::restore_trash))
+        .route("/api/search", get(files_api::search))
+        .route("/api/download", get(files_api::download))
+        .route("/api/gitchanges", get(files_api::gitchanges))
+        .route("/api/session-peek", get(files_api::session_peek))
+        .route("/api/zip", get(files_api::zip))
+        .merge(upload_route)
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            files_api::require_pin,
+        ));
+
     Router::new()
         .route("/", get(index))
         .route("/app.js", get(app_js))
@@ -58,22 +113,55 @@ fn router(audio_tx: broadcast::Sender<Bytes>, mic_tx: mpsc::Sender<MicMsg>) -> R
         .route("/mic-worklet.js", get(mic_worklet_js))
         .route("/audio", get(ws_audio))
         .route("/mic", get(ws_mic))
+        .merge(api)
         .with_state(state)
 }
 
+/// Build the `RustlsConfig` up front so the caller can hold a clone of it and
+/// hot-swap the cert later (e.g. once a real Tailscale cert becomes
+/// available) without restarting the listener -- `RustlsConfig` is `Clone`
+/// and reloads are applied in-place via `reload_from_pem_file`.
+pub async fn load_tls_config(cert_path: &Path, key_path: &Path) -> Result<RustlsConfig> {
+    Ok(RustlsConfig::from_pem_file(cert_path, key_path).await?)
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn serve_tls(
     audio_tx: broadcast::Sender<Bytes>,
     mic_tx: mpsc::Sender<MicMsg>,
+    files_config: Arc<RwLock<Config>>,
+    sessions: Arc<SessionStore>,
     port: u16,
-    cert_path: &Path,
-    key_path: &Path,
+    tls_config: RustlsConfig,
 ) -> Result<()> {
-    let config = RustlsConfig::from_pem_file(cert_path, key_path).await?;
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let listener = std::net::TcpListener::bind(addr)?;
+    // tokio's from_std (inside from_tcp_rustls) requires non-blocking mode.
+    listener.set_nonblocking(true)?;
+    make_uninheritable(&listener)?;
     eprintln!("[server] listening on https://0.0.0.0:{port}");
-    axum_server::bind_rustls(addr, config)
-        .serve(router(audio_tx, mic_tx).into_make_service())
+    axum_server::tls_rustls::from_tcp_rustls(listener, tls_config)?
+        .serve(
+            router(audio_tx, mic_tx, files_config, sessions)
+                .into_make_service(),
+        )
         .await?;
+    Ok(())
+}
+
+/// Clear the inherit flag on the listening socket. Child processes spawned via
+/// `std::process::Command` (Claude sessions from /api/spawn) inherit handles
+/// on Windows; an inherited listener keeps port 8443 bound after the bridge
+/// exits, so a restarted bridge can't bind while any spawned session lives.
+fn make_uninheritable(listener: &std::net::TcpListener) -> std::io::Result<()> {
+    use std::os::windows::io::AsRawSocket;
+    use windows_sys::Win32::Foundation::{SetHandleInformation, HANDLE_FLAG_INHERIT};
+    let ok = unsafe {
+        SetHandleInformation(listener.as_raw_socket() as _, HANDLE_FLAG_INHERIT, 0)
+    };
+    if ok == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
     Ok(())
 }
 
