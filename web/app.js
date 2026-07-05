@@ -2693,33 +2693,12 @@ spawnCustomBtn.addEventListener('click', async () => {
   runSpawn(p, name || null, 'auto');
 });
 
-// Prominent "Start Claude here" for the folder being browsed (tap = auto).
+// Prominent "Start Claude here" for the folder being browsed: always ask
+// visible/hidden via the options sheet (no silent auto-spawn from here).
 filesStartHereBtn.addEventListener('click', () => {
   if (filesCurrentPath === null) return;
-  if (startHereLongPressFired) { startHereLongPressFired = false; return; }
-  quickSpawn(filesCurrentPath, filesPathTail(filesCurrentPath));
+  openSpawnSheet(filesCurrentPath, filesPathTail(filesCurrentPath));
 });
-// Long-press the header button -> options sheet for the current folder.
-let startHereLongPressTimer = null;
-let startHereLongPressFired = false;
-filesStartHereBtn.addEventListener('pointerdown', () => {
-  if (filesCurrentPath === null) return;
-  startHereLongPressFired = false;
-  startHereLongPressTimer = setTimeout(() => {
-    startHereLongPressFired = true;
-    openSpawnSheet(filesCurrentPath, filesPathTail(filesCurrentPath));
-  }, 500);
-});
-function clearStartHereLongPress() {
-  if (startHereLongPressTimer) { clearTimeout(startHereLongPressTimer); startHereLongPressTimer = null; }
-}
-filesStartHereBtn.addEventListener('pointerup', () => {
-  clearStartHereLongPress();
-  // Suppress the click that follows a long-press.
-  if (startHereLongPressFired) { setTimeout(() => { startHereLongPressFired = false; }, 0); }
-});
-filesStartHereBtn.addEventListener('pointercancel', clearStartHereLongPress);
-filesStartHereBtn.addEventListener('pointerleave', clearStartHereLongPress);
 
 // ---- Sort toggle -----------------------------------------------------------
 
