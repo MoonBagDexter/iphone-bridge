@@ -290,7 +290,11 @@ fn build_spawn_cmdline(claude: &str, session_name: &str) -> String {
     // registers a cloud-looking "environment" the app spawns fresh sessions
     // into, while `--remote-control` mirrors a normal LOCAL session (user's
     // scripts, CLAUDE.md, MCP config) into the app as-is.
-    format!("\"{claude}\" --remote-control \"{name}\"")
+    //
+    // `--permission-mode auto`: phone-driven sessions can't be babysat, so
+    // start in Auto mode (runs without routine prompts; a background safety
+    // classifier still blocks escalations) rather than manual default.
+    format!("\"{claude}\" --remote-control \"{name}\" --permission-mode auto")
 }
 
 /// Does a process with this PID currently exist? Uses `OpenProcess` with the
@@ -404,7 +408,7 @@ mod tests {
     fn cmdline_quotes_name_with_spaces() {
         assert_eq!(
             build_spawn_cmdline("claude", "MetaGrid (test)"),
-            "\"claude\" --remote-control \"MetaGrid (test)\""
+            "\"claude\" --remote-control \"MetaGrid (test)\" --permission-mode auto"
         );
     }
 
@@ -412,7 +416,7 @@ mod tests {
     fn cmdline_quotes_claude_path_with_spaces() {
         assert_eq!(
             build_spawn_cmdline("C:\\Program Files\\node\\claude.cmd", "x"),
-            "\"C:\\Program Files\\node\\claude.cmd\" --remote-control \"x\""
+            "\"C:\\Program Files\\node\\claude.cmd\" --remote-control \"x\" --permission-mode auto"
         );
     }
 
@@ -422,7 +426,7 @@ mod tests {
         // quotes must be dropped or they break out of the quoting entirely.
         assert_eq!(
             build_spawn_cmdline("claude", "evil\" & calc & \""),
-            "\"claude\" --remote-control \"evil & calc & \""
+            "\"claude\" --remote-control \"evil & calc & \" --permission-mode auto"
         );
     }
 
