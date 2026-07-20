@@ -419,6 +419,27 @@
     }
     .dictate-note { font-size: .78rem; line-height: 1.45; }
 
+    /* Big button sits at the bottom, in thumb reach, with Enter beside it so
+       a dictated line can be sent without leaving the tab. */
+    .dictate-btn-row {
+      display: flex;
+      gap: .4rem;
+      flex: 0 0 auto;
+    }
+    .dictate-btn { min-height: 5rem; }
+    .dictate-enter {
+      flex: 0 0 4.2rem;
+      border-radius: .75rem;
+      border: 1px solid var(--idle);
+      background: var(--idle-bg);
+      color: var(--fg);
+      font-size: 1.5rem;
+      font-family: inherit;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .dictate-enter:active { background: var(--idle); }
+
     .space-btn {
       flex: 0 0 auto;
       height: 5.5vh;
@@ -445,6 +466,9 @@
       align-items: center;
       justify-content: center;
       margin-top: 0.35rem;
+      /* Keep clear of the absolutely-positioned refresh button on the right;
+         padded both sides so the pills stay optically centred. */
+      padding: 0 2.4rem;
     }
     .mode-switch {
       display: flex;
@@ -453,7 +477,11 @@
       border: 1px solid var(--idle);
       border-radius: 999px;
       padding: 0.2rem;
+      max-width: 100%;
+      overflow-x: auto;
+      scrollbar-width: none;
     }
+    .mode-switch::-webkit-scrollbar { display: none; }
     .refresh-btn {
       position: absolute;
       right: 0;
@@ -496,7 +524,10 @@
     .clear-btn:active { background: #7f1d1d; color: #fff; }
     .mode-pill {
       flex: 0 0 auto;
-      padding: 0.25rem 0.9rem;
+      white-space: nowrap;
+      /* Tightened when Dictate made it four pills -- 0.9rem overflowed on a
+         phone and pushed the group under the refresh button. */
+      padding: 0.25rem 0.7rem;
       border-radius: 999px;
       border: none;
       background: transparent;
@@ -1547,18 +1578,6 @@
   </div>
 
   <div id="view-dictate" class="view" hidden>
-    <span class="ptt-state" id="dictate-state">tap to talk</span>
-
-    <button id="dictate-btn" class="ptt-btn" type="button">
-      <svg class="ptt-mic" viewBox="0 0 24 24" aria-hidden="true">
-        <rect x="9" y="3" width="6" height="11" rx="3"/>
-        <path d="M6 12 v0.5 a6 6 0 0 0 12 0 V12" fill="none"/>
-        <line x1="12" y1="18.5" x2="12" y2="21.5"/>
-        <line x1="9" y1="21.5" x2="15" y2="21.5"/>
-      </svg>
-      <span id="dictate-label">Dictate</span>
-    </button>
-
     <div class="dictate-scroll">
       <div class="dictate-result" id="dictate-result" hidden>
         <div class="dictate-result-head">
@@ -1614,6 +1633,20 @@
           works for either shortcut.
         </p>
       </details>
+    </div>
+
+    <span class="ptt-state" id="dictate-state">tap to talk</span>
+    <div class="dictate-btn-row">
+      <button id="dictate-btn" class="ptt-btn dictate-btn" type="button">
+        <svg class="ptt-mic" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="9" y="3" width="6" height="11" rx="3"/>
+          <path d="M6 12 v0.5 a6 6 0 0 0 12 0 V12" fill="none"/>
+          <line x1="12" y1="18.5" x2="12" y2="21.5"/>
+          <line x1="9" y1="21.5" x2="15" y2="21.5"/>
+        </svg>
+        <span id="dictate-label">Dictate</span>
+      </button>
+      <button id="dictate-enter" class="dictate-enter" type="button" aria-label="Press Enter on the PC">&#x21B5;</button>
     </div>
   </div>
 

@@ -62,6 +62,33 @@ function assertEqual(actual, expected, msg) {
   }
 }
 
+test('a lost pointerup does not deadlock the button forever', () => {
+  // iOS steals gestures (control centre swipe, call banner, Slide-Over), and
+  // the pointerup for the stolen press either never arrives or arrives with a
+  // different id. Before this fix, activePointerId stayed set and every later
+  // press was discarded as a duplicate -- the button was dead until reload.
+  let state = { ...freshActivatedState(), activePointerId: 7 };
+
+  // A genuinely new press, different pointer, while the stale one is "active".
+  const down = pttPressReduce(state, { type: 'down', pointerId: 8 }, 1000);
+  assertEqual(down.actions, ['startTx'], 'new press must be honoured, not swallowed');
+  assertEqual(down.state.activePointerId, 8, 'the new pointer takes ownership');
+
+  // And it must still toggle off on the next tap.
+  const up = pttPressReduce(down.state, { type: 'up', pointerId: 8 }, 1100);
+  const off = pttPressReduce(up.state, { type: 'down', pointerId: 9 }, 2000);
+  assertEqual(off.actions, ['stopTx'], 'second tap must stop it');
+});
+
+test('a true duplicate pointerdown (same id) is still ignored', () => {
+  // The synthetic double-down iOS emits for one physical touch carries the
+  // same pointerId, which is what distinguishes it from a real second press.
+  const state = { ...freshActivatedState(), activePointerId: 3, transmitting: true };
+  const dup = pttPressReduce(state, { type: 'down', pointerId: 3 }, 1000);
+  assertEqual(dup.actions, [], 'duplicate must not toggle');
+  assertEqual(dup.state.activePointerId, 3, 'state unchanged');
+});
+
 function freshActivatedState() {
   return {
     activated: true,

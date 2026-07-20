@@ -77,13 +77,22 @@ async fn dictate_upload(body: Bytes) -> impl axum::response::IntoResponse {
     use axum::http::StatusCode;
     use axum::Json;
 
+    // Log arrival before doing any work: when a recording goes missing, the
+    // first thing worth knowing is whether it reached the PC at all.
+    crate::logging::log_both(&format!(
+        "[dictate] upload received: {} bytes",
+        body.len()
+    ));
+
     if body.is_empty() {
+        crate::logging::log_both("[dictate] rejected: empty body");
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": "empty recording"})),
         );
     }
 
+    let started = std::time::Instant::now();
     let bytes = body.to_vec();
     let outcome = tokio::task::spawn_blocking(move || {
         let text = crate::dictate::transcribe_upload(&bytes)?;
@@ -91,21 +100,25 @@ async fn dictate_upload(body: Bytes) -> impl axum::response::IntoResponse {
         anyhow::Ok(text)
     })
     .await;
+    let elapsed = started.elapsed().as_secs_f32();
 
     match outcome {
         Ok(Ok(text)) => {
-            eprintln!("[dictate] uploaded recording -> {text:?}");
+            crate::logging::log_both(&format!(
+                "[dictate] transcribed in {elapsed:.1}s, {} chars: {text:?}",
+                text.chars().count()
+            ));
             (StatusCode::OK, Json(serde_json::json!({ "text": text })))
         }
         Ok(Err(e)) => {
-            eprintln!("[dictate] upload failed: {e:#}");
+            crate::logging::log_both(&format!("[dictate] failed after {elapsed:.1}s: {e:#}"));
             (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 Json(serde_json::json!({ "error": e.to_string() })),
             )
         }
         Err(e) => {
-            eprintln!("[dictate] upload task panicked: {e}");
+            crate::logging::log_both(&format!("[dictate] task panicked after {elapsed:.1}s: {e}"));
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": "transcription crashed" })),

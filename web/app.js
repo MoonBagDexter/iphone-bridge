@@ -1228,8 +1228,17 @@ function pttPressReduce(state, event, now) {
   let next = state;
 
   if (event.type === 'down') {
-    // Duplicate synthetic pointerdown while a press is already active -- ignore.
-    if (state.activePointerId !== null && state.activePointerId !== undefined) {
+    // A duplicate synthetic pointerdown carries the SAME pointerId as the
+    // press already in flight -- that's what distinguishes it from a real
+    // second tap. Ignore only those.
+    //
+    // A *different* pointerId means the previous press never delivered its
+    // up/cancel: iOS drops them whenever it steals a gesture (control centre,
+    // call banner, Slide-Over). Adopting the new press is essential -- holding
+    // the stale id would discard every future press as a duplicate and leave
+    // the button permanently dead until reload.
+    if (state.activePointerId === event.pointerId
+        && state.activePointerId !== null && state.activePointerId !== undefined) {
       return { state, actions };
     }
     next = { ...state, activePointerId: event.pointerId };
@@ -1350,6 +1359,9 @@ function bindCopyableUrl(textId, buttonId, url) {
       .catch(() => toast('copy failed'));
   });
 }
+
+// Send the dictated line without switching to PTT just to press Enter.
+document.getElementById('dictate-enter').addEventListener('click', () => sendKey('enter'));
 
 bindCopyableUrl('dictate-api-url', 'dictate-api-copy', location.origin + '/api/dictate');
 bindCopyableUrl('dictate-url', 'dictate-url-copy', location.origin + '/#dictate');
@@ -3422,6 +3434,10 @@ const MODE_KEY = 'iphone-bridge-mode';
 // the iOS mic-permission prompt fires immediately on first interaction.
 let pendingAutoActivate = false;
 
+// True when the page was opened via #dictate and should start recording as
+// soon as the mic is available.
+let autoStartPending = false;
+
 async function setMode(mode) {
   // Tear down whichever mode we're leaving. Each branch below only touches
   // resources for the mode being entered/left -- Bridge/PTT teardown logic
@@ -3470,7 +3486,11 @@ async function setMode(mode) {
     // immediately. If we got here from localStorage restore on page load
     // (no gesture), defer to the first pointer event.
     if (!pttActivated) {
-      activatePtt().catch(() => { pendingAutoActivate = true; });
+      activatePtt()
+        .then(() => { if (mode === 'dictate') beginDictation(); })
+        .catch(() => { pendingAutoActivate = true; });
+    } else if (mode === 'dictate') {
+      beginDictation();
     }
   } else if (mode === 'files') {
     enterFilesMode();
@@ -3496,7 +3516,7 @@ document.getElementById('refresh-btn').addEventListener('click', () => {
 document.addEventListener('pointerdown', () => {
   if (pendingAutoActivate && !pttActivated && (!viewPtt.hidden || !viewDictate.hidden)) {
     pendingAutoActivate = false;
-    activatePtt();
+    activatePtt().then(() => { if (!viewDictate.hidden) beginDictation(); }).catch(() => {});
   }
 }, { capture: true });
 
@@ -3573,22 +3593,18 @@ try {
   }
 } catch (_) { /* ignore */ }
 
-// Opening #dictate should begin recording without a second tap. iOS only
-// grants mic access from a user gesture, and following a Shortcut link isn't
-// one, so fall back to arming on the first touch.
+// Opening #dictate should begin recording without a second tap. Activation is
+// owned by setMode -- requesting the mic twice at once leaves getUserMedia
+// racing itself and the press reducer out of sync with reality, so this only
+// ever records the intent and lets the existing activation path fulfil it.
 function autoStartDictation() {
-  const begin = () => {
-    if (pttTransmitting) return;
-    pttPressState = { ...pttPressState, activated: pttActivated, transmitting: pttTransmitting };
-    startTransmitting();
-  };
-  activatePtt()
-    .then(begin)
-    .catch(() => {
-      setPttUi('Dictate', 'tap to start', null);
-      document.addEventListener('pointerdown', function once() {
-        document.removeEventListener('pointerdown', once, { capture: true });
-        activatePtt().then(begin).catch(() => {});
-      }, { capture: true, once: true });
-    });
+  autoStartPending = true;
+  if (pttActivated) beginDictation();
+}
+
+function beginDictation() {
+  if (!autoStartPending || pttTransmitting) return;
+  autoStartPending = false;
+  pttPressState = { ...pttPressState, activated: true, transmitting: false };
+  startTransmitting();
 }
