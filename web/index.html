@@ -346,6 +346,79 @@
     .ptt-btn.on { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
     .ptt-btn.draining { border-color: #f59e0b; background: #78350f; color: #fbbf24; }
 
+    /* ---- Dictate mode ---------------------------------------------------- */
+    .dictate-scroll {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      display: flex;
+      flex-direction: column;
+      gap: .5rem;
+    }
+    .dictate-result {
+      border: 1px solid var(--line);
+      border-radius: .6rem;
+      background: var(--panel);
+      padding: .55rem .65rem;
+    }
+    .dictate-result-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: .72rem;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: .35rem;
+    }
+    .dictate-text {
+      font-size: .95rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .dictate-copy {
+      border: 1px solid var(--line);
+      background: transparent;
+      color: var(--muted);
+      border-radius: .4rem;
+      padding: .2rem .5rem;
+      font-size: .72rem;
+      font-family: inherit;
+    }
+    .dictate-copy:active { background: var(--idle); }
+    .dictate-guide {
+      border: 1px solid var(--line);
+      border-radius: .6rem;
+      background: var(--panel);
+      padding: .55rem .65rem;
+      font-size: .84rem;
+      color: var(--muted);
+    }
+    .dictate-guide summary {
+      cursor: pointer;
+      color: var(--fg);
+      font-size: .8rem;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    .dictate-guide ol { margin: .4rem 0 .5rem 1.1rem; padding: 0; }
+    .dictate-guide li { margin: .2rem 0; }
+    .dictate-guide p { margin: .45rem 0; }
+    .dictate-url {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: .78rem;
+      color: var(--accent);
+      background: var(--bg);
+      border: 1px solid var(--line);
+      border-radius: .4rem;
+      padding: .4rem .5rem;
+      margin: .3rem 0;
+      word-break: break-all;
+    }
+    .dictate-note { font-size: .78rem; line-height: 1.45; }
+
     .space-btn {
       flex: 0 0 auto;
       height: 5.5vh;
@@ -1473,6 +1546,77 @@
     <button id="key-space" class="space-btn" type="button">&#x2423; space</button>
   </div>
 
+  <div id="view-dictate" class="view" hidden>
+    <span class="ptt-state" id="dictate-state">tap to talk</span>
+
+    <button id="dictate-btn" class="ptt-btn" type="button">
+      <svg class="ptt-mic" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="9" y="3" width="6" height="11" rx="3"/>
+        <path d="M6 12 v0.5 a6 6 0 0 0 12 0 V12" fill="none"/>
+        <line x1="12" y1="18.5" x2="12" y2="21.5"/>
+        <line x1="9" y1="21.5" x2="15" y2="21.5"/>
+      </svg>
+      <span id="dictate-label">Dictate</span>
+    </button>
+
+    <div class="dictate-scroll">
+      <div class="dictate-result" id="dictate-result" hidden>
+        <div class="dictate-result-head">
+          <span>Last transcript</span>
+          <button id="dictate-copy" class="dictate-copy" type="button">copy</button>
+        </div>
+        <div class="dictate-text" id="dictate-text"></div>
+      </div>
+
+      <details class="dictate-guide">
+        <summary>Custom Button setup &mdash; no web page</summary>
+        <p>
+          Records on the phone and sends it here. Nothing opens on screen, so this is
+          the one to put on the Action Button.
+        </p>
+        <ol>
+          <li>Open <b>Shortcuts</b>, tap <b>+</b></li>
+          <li>Add <b>Record Audio</b>. Tap <b>Show More</b> and set
+              <b>Start Recording</b> to <b>On Tap</b> &mdash; tap once to start, again to stop.</li>
+          <li>Add <b>Get Contents of URL</b> and set:
+            <ul>
+              <li><b>URL</b> &mdash; the address below</li>
+              <li><b>Method</b> &mdash; POST</li>
+              <li><b>Headers</b> &mdash; add <code>x-bridge-pin</code> set to your bridge PIN</li>
+              <li><b>Request Body</b> &mdash; File, then pick <b>Recorded Audio</b></li>
+            </ul>
+          </li>
+          <li>Name it <b>Dictate</b>, then <b>Settings &rarr; Action Button &rarr; Shortcut &rarr; Dictate</b></li>
+        </ol>
+        <div class="dictate-url" id="dictate-api-url"></div>
+        <button id="dictate-api-copy" class="dictate-copy" type="button">copy address</button>
+        <p class="dictate-note">
+          Transcription runs on this PC and the text is typed into whatever window
+          has focus, plus copied to the PC clipboard. Nothing leaves your machine.
+        </p>
+      </details>
+
+      <details class="dictate-guide">
+        <summary>Alternative &mdash; open this tab instead</summary>
+        <p>
+          Opens the bridge and starts recording live. Skips the upload, so the
+          transcript comes back a little sooner, but Safari appears each time.
+        </p>
+        <ol>
+          <li>Open <b>Shortcuts</b>, tap <b>+</b></li>
+          <li><b>Add Action</b> &rarr; search <b>Open URLs</b></li>
+          <li>Paste the address below</li>
+        </ol>
+        <div class="dictate-url" id="dictate-url"></div>
+        <button id="dictate-url-copy" class="dictate-copy" type="button">copy address</button>
+        <p class="dictate-note">
+          No Action Button? <b>Settings &rarr; Accessibility &rarr; Touch &rarr; Back Tap</b>
+          works for either shortcut.
+        </p>
+      </details>
+    </div>
+  </div>
+
   <div id="view-files" class="view" hidden>
     <div class="files-scroll" id="files-scroll">
       <div class="ptr-hint" id="ptr-hint" hidden>pull to refresh</div>
@@ -1711,6 +1855,7 @@
     <div class="mode-switch">
       <button id="mode-bridge" class="mode-pill active" type="button">Bridge</button>
       <button id="mode-ptt" class="mode-pill" type="button">PTT</button>
+      <button id="mode-dictate" class="mode-pill" type="button">Dictate</button>
       <button id="mode-files" class="mode-pill" type="button">Files</button>
     </div>
     <button id="refresh-btn" class="refresh-btn" type="button" aria-label="Reload page">&#x21BB;</button>

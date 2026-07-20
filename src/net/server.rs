@@ -8,9 +8,10 @@ use bytes::Bytes;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, Mutex};
 
 use crate::audio::render::MicMsg;
+use crate::dictate::DictationBuffer;
 use crate::files::api as files_api;
 use crate::files::config::Config;
 use crate::files::sessions::SessionStore;
@@ -24,6 +25,9 @@ pub struct AppState {
     pub config: Arc<RwLock<Config>>,
     /// Live Claude Code sessions spawned via `/api/spawn`.
     pub sessions: Arc<SessionStore>,
+    /// Mic audio captured for dictation. Lives in shared state rather than per
+    /// connection because iOS drops the mic socket freely mid-recording.
+    pub dictation: Arc<Mutex<DictationBuffer>>,
 }
 
 const INDEX_HTML: &str = include_str!("../../web/index.html");
@@ -60,6 +64,56 @@ async fn mic_worklet_js() -> StaticResponse {
     static_response("application/javascript", MIC_WORKLET_JS)
 }
 
+/// 64 MB: comfortably past ten minutes of phone audio in any codec, while
+/// still refusing anything that clearly isn't a voice note.
+const DICTATE_BODY_LIMIT: usize = 64 * 1024 * 1024;
+
+/// Transcribe a recording uploaded by the iOS Shortcut, type it into the
+/// focused window, and hand the text back so the phone can show it.
+///
+/// The body is the audio file itself -- Shortcuts' "Get Contents of URL"
+/// posts files raw, and a multipart wrapper would only add a step to build.
+async fn dictate_upload(body: Bytes) -> impl axum::response::IntoResponse {
+    use axum::http::StatusCode;
+    use axum::Json;
+
+    if body.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "empty recording"})),
+        );
+    }
+
+    let bytes = body.to_vec();
+    let outcome = tokio::task::spawn_blocking(move || {
+        let text = crate::dictate::transcribe_upload(&bytes)?;
+        crate::dictate::deliver(&text)?;
+        anyhow::Ok(text)
+    })
+    .await;
+
+    match outcome {
+        Ok(Ok(text)) => {
+            eprintln!("[dictate] uploaded recording -> {text:?}");
+            (StatusCode::OK, Json(serde_json::json!({ "text": text })))
+        }
+        Ok(Err(e)) => {
+            eprintln!("[dictate] upload failed: {e:#}");
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+        }
+        Err(e) => {
+            eprintln!("[dictate] upload task panicked: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "transcription crashed" })),
+            )
+        }
+    }
+}
+
 fn router(
     audio_tx: broadcast::Sender<Bytes>,
     mic_tx: mpsc::Sender<MicMsg>,
@@ -71,6 +125,7 @@ fn router(
         mic_tx,
         config,
         sessions,
+        dictation: Arc::new(Mutex::new(DictationBuffer::default())),
     };
 
     // Files API: every `/api/*` route is gated by the PIN middleware. The
@@ -83,7 +138,14 @@ fn router(
             files_api::UPLOAD_BODY_LIMIT,
         ));
 
+    // Recordings arrive as a raw body from the iOS Shortcut, well over axum's
+    // 2 MB default -- ten minutes of AAC is roughly 5 MB.
+    let dictate_route = Router::new()
+        .route("/api/dictate", post(dictate_upload))
+        .layer(axum::extract::DefaultBodyLimit::max(DICTATE_BODY_LIMIT));
+
     let api = Router::new()
+        .merge(dictate_route)
         .route("/api/roots", get(files_api::roots))
         .route("/api/ls", get(files_api::ls))
         .route("/api/gitstatus", get(files_api::gitstatus))

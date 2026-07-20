@@ -824,6 +824,13 @@ let pttCaptureNode = null;
 let pttWs = null;
 let pttDrainTimer = null;
 
+// Which server behaviour the big button drives. PTT mode routes mic audio to
+// the virtual cable and taps Alt so SuperWhisper hears it; Dictate mode has
+// the bridge keep the audio and run whisper.cpp on it. Everything else --
+// socket, reconnect, press handling, mic graph -- is identical, so the two
+// modes differ only in this prefix.
+let talkProtocol = 'ptt';
+
 // Lifecycle / reconnect state. iOS suspends WebSockets, AudioContexts, and
 // MediaStream tracks when the home-screen web clip backgrounds, so the socket
 // disappears constantly. We treat pttWs as ephemeral and auto-heal it.
@@ -840,12 +847,62 @@ const pttWsBackoff = createBackoffScheduler(() => openPttWs(), () => pttModeActi
 // the lone Alt as "start listening" -- forcing a second tap to toggle off.
 let pttStartPending = false;
 
+const dictateBtn = document.getElementById('dictate-btn');
+const dictateLabelEl = document.getElementById('dictate-label');
+const dictateStateEl = document.getElementById('dictate-state');
+
+// Both modes drive the same reducer and socket, so drive both button faces
+// too. Only one view is ever visible, so writing to both is free.
 function setPttUi(label, stateMsg, cls /* 'on' | 'draining' | null */) {
-  pttLabelEl.textContent = label;
-  pttBtn.classList.toggle('on', cls === 'on');
-  pttBtn.classList.toggle('draining', cls === 'draining');
-  pttStateEl.textContent = stateMsg;
+  const inDictate = talkProtocol === 'dictate';
+  const labelEl = inDictate ? dictateLabelEl : pttLabelEl;
+  const stateEl = inDictate ? dictateStateEl : pttStateEl;
+  const btn = inDictate ? dictateBtn : pttBtn;
+  // "Push to Talk" is PTT's vocabulary; dictation says what it's doing.
+  if (inDictate && label === 'Push to Talk') label = 'Dictate';
+  labelEl.textContent = label;
+  stateEl.textContent = stateMsg;
+  btn.classList.toggle('on', cls === 'on');
+  btn.classList.toggle('draining', cls === 'draining');
 }
+
+// --- dictate-ui-pure (pure; tested by tests/dictate-ui.test.mjs) ---
+
+// How long a recording was, phrased for a status line.
+function dictateDuration(seconds) {
+  if (typeof seconds !== 'number' || !isFinite(seconds) || seconds <= 0) {
+    return 'no audio captured';
+  }
+  if (seconds < 60) return seconds.toFixed(1) + 's of audio';
+  const mins = Math.floor(seconds / 60);
+  const rem = Math.round(seconds % 60);
+  return rem === 0 ? mins + 'm of audio' : mins + 'm ' + rem + 's of audio';
+}
+
+// Map a server dictation frame onto what the button should show. Returns null
+// for frames this view doesn't own, so the caller can ignore them.
+function dictateView(msg) {
+  if (!msg || msg.type !== 'dictation') return null;
+  switch (msg.state) {
+    case 'recording':
+      return { label: 'Listening…', state: 'tap to stop', cls: 'on', text: null };
+    case 'transcribing':
+      return { label: 'Transcribing…', state: dictateDuration(msg.seconds), cls: 'draining', text: null };
+    case 'done': {
+      const text = typeof msg.text === 'string' ? msg.text : '';
+      const state = msg.overflowed
+        ? 'hit the 10 minute limit'
+        : (text ? 'typed into your PC' : 'nothing heard');
+      return { label: 'Dictate', state, cls: null, text };
+    }
+    case 'error':
+      return { label: 'Dictate', state: msg.error || 'transcription failed', cls: null, text: null };
+    default:
+      return null;
+  }
+}
+
+// --- end dictate-ui-pure ---
 
 // Open the keys/control WebSocket. Doesn't require any iOS permission, so we
 // can do this the moment the user enters PTT mode (or restores it on load).
@@ -872,7 +929,7 @@ function openPttWs() {
     // If the user pressed PTT during the reconnect window, the start was
     // deferred. Fire it now -- but only if they're still pressing.
     if (pttStartPending && pttTransmitting) {
-      try { pttWs.send('ptt:start'); } catch (_) {}
+      try { pttWs.send(talkProtocol + ':start'); } catch (_) {}
     }
     pttStartPending = false;
     // Drop the "reconnecting…" message if that's what's showing.
@@ -880,6 +937,16 @@ function openPttWs() {
       setPttUi('Push to Talk', pttTransmitting ? 'release / tap to stop' : 'tap or hold',
                pttTransmitting ? 'on' : null);
     }
+  };
+
+  pttWs.onmessage = (e) => {
+    if (typeof e.data !== 'string') return;
+    let msg;
+    try { msg = JSON.parse(e.data); } catch (_) { return; }
+    const view = dictateView(msg);
+    if (!view) return;
+    setPttUi(view.label, view.state, view.cls);
+    if (view.text !== null) showDictateResult(view.text);
   };
 
   pttWs.onclose = () => {
@@ -1004,7 +1071,7 @@ async function startTransmitting() {
   setPttUi('Listening…', 'release / tap to stop', 'on');
 
   if (pttWs && pttWs.readyState === WebSocket.OPEN) {
-    pttWs.send('ptt:start');
+    pttWs.send(talkProtocol + ':start');
     pttStartPending = false;
   } else {
     // WS is reconnecting (typically after Slide-Over return on iPad). Defer
@@ -1037,7 +1104,7 @@ async function startTransmitting() {
     setPttUi('Activate', 'mic acquire failed', null);
     setFooter(String(e));
     if (pttWs && pttWs.readyState === WebSocket.OPEN) {
-      pttWs.send('ptt:stop');
+      pttWs.send(talkProtocol + ':stop');
     }
     return;
   }
@@ -1059,7 +1126,7 @@ async function startTransmitting() {
       teardownTalkingMic();
       setPttUi('Activate', 'mic stream ended', null);
       if (pttWs && pttWs.readyState === WebSocket.OPEN) {
-        try { pttWs.send('ptt:stop'); } catch (_) {}
+        try { pttWs.send(talkProtocol + ':stop'); } catch (_) {}
       }
     };
     track.onmute = () => { toast('mic muted by system'); };
@@ -1079,7 +1146,7 @@ async function startTransmitting() {
     setFooter(String(e));
     teardownTalkingMic();
     if (pttWs && pttWs.readyState === WebSocket.OPEN) {
-      pttWs.send('ptt:stop');
+      pttWs.send(talkProtocol + ':stop');
     }
     return;
   }
@@ -1112,7 +1179,7 @@ function stopTransmitting() {
   if (pttStartPending) {
     pttStartPending = false;
   } else if (pttWs && pttWs.readyState === WebSocket.OPEN) {
-    pttWs.send('ptt:stop');
+    pttWs.send(talkProtocol + ':stop');
   }
   // Tear the mic + audio session down right away -- iOS releases the voice
   // session within a few hundred ms and other apps get their audio back.
@@ -1225,7 +1292,7 @@ function runPttAction(action) {
 
 function pttPressDown(e) {
   if (e.cancelable) e.preventDefault();
-  try { pttBtn.setPointerCapture(e.pointerId); } catch (_) {}
+  try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
   // Keep the reducer's view of "activated" in sync with the real world --
   // activation can complete/fail asynchronously between presses.
   pttPressState = { ...pttPressState, activated: pttActivated, transmitting: pttTransmitting };
@@ -1251,6 +1318,41 @@ function pttPressCancel(e) {
 pttBtn.addEventListener('pointerdown', pttPressDown);
 pttBtn.addEventListener('pointerup', pttPressUp);
 pttBtn.addEventListener('pointercancel', pttPressCancel);
+
+// Dictate's button shares the reducer -- only one of the two views is ever
+// visible, so there's no ambiguity about which press is being handled.
+dictateBtn.addEventListener('pointerdown', pttPressDown);
+dictateBtn.addEventListener('pointerup', pttPressUp);
+dictateBtn.addEventListener('pointercancel', pttPressCancel);
+
+const dictateResultEl = document.getElementById('dictate-result');
+const dictateTextEl = document.getElementById('dictate-text');
+
+function showDictateResult(text) {
+  if (!text) { dictateResultEl.hidden = true; return; }
+  dictateTextEl.textContent = text;
+  dictateResultEl.hidden = false;
+}
+
+document.getElementById('dictate-copy').addEventListener('click', () => {
+  navigator.clipboard.writeText(dictateTextEl.textContent || '')
+    .then(() => toast('copied'))
+    .catch(() => toast('copy failed'));
+});
+
+// The address the Shortcut needs. Derived from wherever the page is being
+// served, so it's right whether that's the Tailscale name or a LAN address.
+function bindCopyableUrl(textId, buttonId, url) {
+  document.getElementById(textId).textContent = url;
+  document.getElementById(buttonId).addEventListener('click', () => {
+    navigator.clipboard.writeText(url)
+      .then(() => toast('address copied'))
+      .catch(() => toast('copy failed'));
+  });
+}
+
+bindCopyableUrl('dictate-api-url', 'dictate-api-copy', location.origin + '/api/dictate');
+bindCopyableUrl('dictate-url', 'dictate-url-copy', location.origin + '/#dictate');
 
 // ---- Nav controls (arrows + editing + tab/desktop switching) -------------
 // All key commands ride on the same /mic WebSocket as text frames. They are
@@ -3303,9 +3405,15 @@ function exitFilesMode() {
 const modeBridgeBtn = document.getElementById('mode-bridge');
 const modePttBtn = document.getElementById('mode-ptt');
 const modeFilesBtn = document.getElementById('mode-files');
+const modeDictateBtn = document.getElementById('mode-dictate');
 const viewBridge = document.getElementById('view-bridge');
 const viewPtt = document.getElementById('view-ptt');
 const viewFiles = document.getElementById('view-files');
+const viewDictate = document.getElementById('view-dictate');
+
+// PTT and Dictate share all their machinery and differ only in what the
+// server does with the audio, so they're one mode internally.
+const TALK_MODES = ['ptt', 'dictate'];
 
 const MODE_KEY = 'iphone-bridge-mode';
 
@@ -3318,12 +3426,12 @@ async function setMode(mode) {
   // Tear down whichever mode we're leaving. Each branch below only touches
   // resources for the mode being entered/left -- Bridge/PTT teardown logic
   // is untouched from before Files existed.
-  if (mode !== 'ptt' && pttModeActive) {
+  if (!TALK_MODES.includes(mode) && pttModeActive) {
     pttModeActive = false;
     pttWsBackoff.reset();
     pendingKeys.length = 0;
     if (pttTransmitting && pttWs && pttWs.readyState === WebSocket.OPEN) {
-      try { pttWs.send('ptt:stop'); } catch (_) {}
+      try { pttWs.send(talkProtocol + ':stop'); } catch (_) {}
     }
     teardownPtt();
     setPttUi('Activate', 'tap to activate', null);
@@ -3339,11 +3447,19 @@ async function setMode(mode) {
   viewBridge.hidden = mode !== 'bridge';
   viewPtt.hidden = mode !== 'ptt';
   viewFiles.hidden = mode !== 'files';
+  viewDictate.hidden = mode !== 'dictate';
   modeBridgeBtn.classList.toggle('active', mode === 'bridge');
   modePttBtn.classList.toggle('active', mode === 'ptt');
   modeFilesBtn.classList.toggle('active', mode === 'files');
+  modeDictateBtn.classList.toggle('active', mode === 'dictate');
 
-  if (mode === 'ptt') {
+  if (TALK_MODES.includes(mode)) {
+    // Decides whether the server routes audio to the virtual cable or keeps
+    // it for whisper. Must be set before any start/stop frame goes out.
+    talkProtocol = mode;
+  }
+
+  if (TALK_MODES.includes(mode)) {
     pttModeActive = true;
     // Open the control WebSocket immediately so nav keys (arrows, Esc,
     // Enter, Ctrl-X shortcuts, tab/desktop switching) work without the user
@@ -3366,6 +3482,7 @@ async function setMode(mode) {
 modeBridgeBtn.addEventListener('click', () => setMode('bridge'));
 modePttBtn.addEventListener('click', () => setMode('ptt'));
 modeFilesBtn.addEventListener('click', () => setMode('files'));
+modeDictateBtn.addEventListener('click', () => setMode('dictate'));
 
 // Manual reload -- when the page is a home-screen web clip there's no Safari
 // chrome to pull-to-refresh, so this is the only way out of a wedged state.
@@ -3377,7 +3494,7 @@ document.getElementById('refresh-btn').addEventListener('click', () => {
 // activatePtt() call will have been rejected by iOS. Try again on the very
 // first pointer interaction (which IS a gesture).
 document.addEventListener('pointerdown', () => {
-  if (pendingAutoActivate && !pttActivated && !viewPtt.hidden) {
+  if (pendingAutoActivate && !pttActivated && (!viewPtt.hidden || !viewDictate.hidden)) {
     pendingAutoActivate = false;
     activatePtt();
   }
@@ -3390,7 +3507,7 @@ document.addEventListener('pointerdown', () => {
 // have to tap Activate after coming back.
 
 function recoverPtt() {
-  if (!pttModeActive || viewPtt.hidden) return;
+  if (!pttModeActive || (viewPtt.hidden && viewDictate.hidden)) return;
   // Wake the audio context if iOS suspended it.
   if (pttCtx && pttCtx.state === 'suspended') {
     pttCtx.resume().catch(() => {});
@@ -3440,8 +3557,38 @@ window.addEventListener('pageshow', (e) => { if (e.persisted) { recoverPtt(); re
 // Network came back -- usually paired with visibilitychange, but not always.
 window.addEventListener('online', () => { recoverPtt(); recoverBridge(); recoverFiles(); });
 
-// Restore last-used mode on load.
+// Restore last-used mode on load -- unless the URL asks for one, which is how
+// the iPhone Action Button shortcut lands straight on dictation.
+const HASH_MODES = { '#dictate': 'dictate', '#ptt': 'ptt', '#files': 'files', '#bridge': 'bridge' };
 try {
-  const saved = localStorage.getItem(MODE_KEY);
-  if (saved === 'ptt' || saved === 'files') setMode(saved);
+  const fromHash = HASH_MODES[location.hash];
+  if (fromHash) {
+    setMode(fromHash);
+    // Arriving via the shortcut means "start now" -- the press that opened
+    // the app was on the phone's button, not on ours.
+    if (fromHash === 'dictate') autoStartDictation();
+  } else {
+    const saved = localStorage.getItem(MODE_KEY);
+    if (saved === 'ptt' || saved === 'files' || saved === 'dictate') setMode(saved);
+  }
 } catch (_) { /* ignore */ }
+
+// Opening #dictate should begin recording without a second tap. iOS only
+// grants mic access from a user gesture, and following a Shortcut link isn't
+// one, so fall back to arming on the first touch.
+function autoStartDictation() {
+  const begin = () => {
+    if (pttTransmitting) return;
+    pttPressState = { ...pttPressState, activated: pttActivated, transmitting: pttTransmitting };
+    startTransmitting();
+  };
+  activatePtt()
+    .then(begin)
+    .catch(() => {
+      setPttUi('Dictate', 'tap to start', null);
+      document.addEventListener('pointerdown', function once() {
+        document.removeEventListener('pointerdown', once, { capture: true });
+        activatePtt().then(begin).catch(() => {});
+      }, { capture: true, once: true });
+    });
+}
