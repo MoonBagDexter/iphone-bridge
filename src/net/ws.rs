@@ -3,9 +3,11 @@ use axum::extract::State;
 use axum::response::IntoResponse;
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
-use tokio::sync::oneshot;
+use serde_json::json;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::audio::render::MicMsg;
+use crate::dictate;
 use crate::keyboard;
 use crate::net::server::AppState;
 
@@ -67,6 +69,18 @@ async fn handle_mic(socket: WebSocket, state: AppState) {
         .send(Message::Text(header.to_string().into()))
         .await;
 
+    // Outbound lane. Transcription finishes on a worker thread well after the
+    // frame that triggered it, so results need a route back to the phone that
+    // doesn't borrow the receive loop.
+    let (out_tx, mut out_rx) = mpsc::channel::<String>(16);
+    let writer = tokio::spawn(async move {
+        while let Some(text) = out_rx.recv().await {
+            if sender.send(Message::Text(text.into())).await.is_err() {
+                break;
+            }
+        }
+    });
+
     while let Some(msg_res) = receiver.next().await {
         let msg = match msg_res {
             Ok(m) => m,
@@ -77,6 +91,15 @@ async fn handle_mic(socket: WebSocket, state: AppState) {
         };
         match msg {
             Message::Binary(bytes) => {
+                // While dictating, the audio is ours -- don't also push it to
+                // the virtual cable, or SuperWhisper would hear the same words.
+                {
+                    let mut buf = state.dictation.lock().await;
+                    if buf.is_active() {
+                        buf.push(&dictate::decode_f32_le(&bytes));
+                        continue;
+                    }
+                }
                 let bytes = Bytes::copy_from_slice(&bytes);
                 if state.mic_tx.send(MicMsg::Pcm(bytes)).await.is_err() {
                     eprintln!("[ws-mic] render thread channel closed");
@@ -123,6 +146,77 @@ async fn handle_mic(socket: WebSocket, state: AppState) {
                         keyboard::tap_alt();
                     });
                 }
+                "dictate:start" => {
+                    eprintln!("[ws-mic] dictate:start -- capturing mic to buffer");
+                    state.dictation.lock().await.start();
+                    let _ = out_tx
+                        .send(json!({"type":"dictation","state":"recording"}).to_string())
+                        .await;
+                }
+                "dictate:stop" => {
+                    let (samples, overflowed) = {
+                        let mut buf = state.dictation.lock().await;
+                        (buf.finish(), buf.overflowed())
+                    };
+                    let seconds = samples.len() as f32 / dictate::TARGET_RATE as f32;
+                    eprintln!("[ws-mic] dictate:stop -- {seconds:.1}s captured, transcribing");
+                    let _ = out_tx
+                        .send(
+                            json!({
+                                "type":"dictation","state":"transcribing",
+                                "seconds": (seconds * 10.0).round() / 10.0
+                            })
+                            .to_string(),
+                        )
+                        .await;
+
+                    // Snapshot the settings and pick the mode now, on the async side:
+                    // mode selection reads the foreground window, which should reflect
+                    // where the user was speaking rather than wherever focus lands
+                    // once whisper has finished.
+                    let voice_cfg = {
+                        let cfg = state.config.read().unwrap();
+                        cfg.voice.clone()
+                    };
+                    let plan = crate::voice::plan(&voice_cfg);
+                    let mode_name = plan.mode.name.clone();
+
+                    // Whisper blocks for a second or two; keep the socket alive.
+                    let tx = out_tx.clone();
+                    tokio::spawn(async move {
+                        let outcome = tokio::task::spawn_blocking(move || {
+                            dictate::finish_and_deliver(&samples, &voice_cfg, &plan)
+                        })
+                        .await;
+                        let payload = match outcome {
+                            Ok(Ok(p)) => {
+                                crate::logging::log_both(&format!(
+                                    "[dictate] {mode_name}: {} chars in {seconds:.1}s of audio",
+                                    p.text.len()
+                                ));
+                                json!({
+                                    "type":"dictation","state":"done",
+                                    "text": p.text, "raw": p.raw,
+                                    "mode": mode_name, "warning": p.warning,
+                                    "overflowed": overflowed
+                                })
+                            }
+                            Ok(Err(e)) => {
+                                crate::logging::log_both(&format!(
+                                    "[dictate] transcription failed: {e:#}"
+                                ));
+                                json!({"type":"dictation","state":"error","error": e.to_string()})
+                            }
+                            Err(e) => {
+                                crate::logging::log_both(&format!(
+                                    "[dictate] transcription task panicked: {e}"
+                                ));
+                                json!({"type":"dictation","state":"error","error":"transcription crashed"})
+                            }
+                        };
+                        let _ = tx.send(payload.to_string()).await;
+                    });
+                }
                 "key:up" => keyboard::tap_arrow_up(),
                 "key:down" => keyboard::tap_arrow_down(),
                 "key:left" => keyboard::tap_arrow_left(),
@@ -158,5 +252,6 @@ async fn handle_mic(socket: WebSocket, state: AppState) {
             _ => { /* ignore */ }
         }
     }
+    writer.abort();
     eprintln!("[ws-mic] client disconnected");
 }

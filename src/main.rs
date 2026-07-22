@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod audio;
+mod dictate;
 mod files;
 mod keyboard;
 mod logging;
@@ -8,6 +9,7 @@ mod net;
 mod state;
 mod tls;
 mod tray;
+mod voice;
 
 use anyhow::Result;
 use bytes::Bytes;

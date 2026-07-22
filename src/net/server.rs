@@ -1,6 +1,7 @@
 use anyhow::Result;
 use axum::{
-    routing::{get, post},
+    extract::State,
+    routing::{delete, get, post},
     Router,
 };
 use axum_server::tls_rustls::RustlsConfig;
@@ -8,13 +9,15 @@ use bytes::Bytes;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, Mutex};
 
 use crate::audio::render::MicMsg;
+use crate::dictate::DictationBuffer;
 use crate::files::api as files_api;
 use crate::files::config::Config;
 use crate::files::sessions::SessionStore;
 use crate::net::ws::{ws_audio, ws_mic};
+use crate::voice::api as voice_api;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -24,6 +27,9 @@ pub struct AppState {
     pub config: Arc<RwLock<Config>>,
     /// Live Claude Code sessions spawned via `/api/spawn`.
     pub sessions: Arc<SessionStore>,
+    /// Mic audio captured for dictation. Lives in shared state rather than per
+    /// connection because iOS drops the mic socket freely mid-recording.
+    pub dictation: Arc<Mutex<DictationBuffer>>,
 }
 
 const INDEX_HTML: &str = include_str!("../../web/index.html");
@@ -60,6 +66,90 @@ async fn mic_worklet_js() -> StaticResponse {
     static_response("application/javascript", MIC_WORKLET_JS)
 }
 
+/// 64 MB: comfortably past ten minutes of phone audio in any codec, while
+/// still refusing anything that clearly isn't a voice note.
+const DICTATE_BODY_LIMIT: usize = 64 * 1024 * 1024;
+
+/// Transcribe a recording uploaded by the iOS Shortcut, type it into the
+/// focused window, and hand the text back so the phone can show it.
+///
+/// The body is the audio file itself -- Shortcuts' "Get Contents of URL"
+/// posts files raw, and a multipart wrapper would only add a step to build.
+async fn dictate_upload(
+    State(state): State<AppState>,
+    body: Bytes,
+) -> impl axum::response::IntoResponse {
+    use axum::http::StatusCode;
+    use axum::Json;
+
+    // Log arrival before doing any work: when a recording goes missing, the
+    // first thing worth knowing is whether it reached the PC at all.
+    crate::logging::log_both(&format!(
+        "[dictate] upload received: {} bytes",
+        body.len()
+    ));
+
+    if body.is_empty() {
+        crate::logging::log_both("[dictate] rejected: empty body");
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "empty recording"})),
+        );
+    }
+
+    let started = std::time::Instant::now();
+    let bytes = body.to_vec();
+    let voice_cfg = {
+        let cfg = state.config.read().unwrap();
+        cfg.voice.clone()
+    };
+    let plan = crate::voice::plan(&voice_cfg);
+    let mode_name = plan.mode.name.clone();
+
+    let outcome = tokio::task::spawn_blocking(move || {
+        let wav = crate::dictate::convert_to_wav_16k(&bytes)?;
+        let raw = crate::dictate::transcribe_wav_with_prompt(&wav, plan.whisper_prompt.as_deref())?;
+        // The upload carries no duration; derive it from the decoded audio so the
+        // history entry and the "time saved" stat stay honest.
+        let seconds = wav.len() as f32 / (crate::dictate::TARGET_RATE as f32 * 2.0);
+        let processed = crate::voice::apply(&raw, &voice_cfg, &plan, seconds);
+        crate::dictate::deliver(&processed.text)?;
+        anyhow::Ok(processed)
+    })
+    .await;
+    let elapsed = started.elapsed().as_secs_f32();
+
+    match outcome {
+        Ok(Ok(p)) => {
+            crate::logging::log_both(&format!(
+                "[dictate] {mode_name}: transcribed in {elapsed:.1}s, {} chars",
+                p.text.chars().count()
+            ));
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "text": p.text, "raw": p.raw,
+                    "mode": mode_name, "warning": p.warning
+                })),
+            )
+        }
+        Ok(Err(e)) => {
+            crate::logging::log_both(&format!("[dictate] failed after {elapsed:.1}s: {e:#}"));
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+        }
+        Err(e) => {
+            crate::logging::log_both(&format!("[dictate] task panicked after {elapsed:.1}s: {e}"));
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "transcription crashed" })),
+            )
+        }
+    }
+}
+
 fn router(
     audio_tx: broadcast::Sender<Bytes>,
     mic_tx: mpsc::Sender<MicMsg>,
@@ -71,6 +161,7 @@ fn router(
         mic_tx,
         config,
         sessions,
+        dictation: Arc::new(Mutex::new(DictationBuffer::default())),
     };
 
     // Files API: every `/api/*` route is gated by the PIN middleware. The
@@ -83,7 +174,14 @@ fn router(
             files_api::UPLOAD_BODY_LIMIT,
         ));
 
+    // Recordings arrive as a raw body from the iOS Shortcut, well over axum's
+    // 2 MB default -- ten minutes of AAC is roughly 5 MB.
+    let dictate_route = Router::new()
+        .route("/api/dictate", post(dictate_upload))
+        .layer(axum::extract::DefaultBodyLimit::max(DICTATE_BODY_LIMIT));
+
     let api = Router::new()
+        .merge(dictate_route)
         .route("/api/roots", get(files_api::roots))
         .route("/api/ls", get(files_api::ls))
         .route("/api/gitstatus", get(files_api::gitstatus))
@@ -100,6 +198,21 @@ fn router(
         .route("/api/gitchanges", get(files_api::gitchanges))
         .route("/api/session-peek", get(files_api::session_peek))
         .route("/api/zip", get(files_api::zip))
+        .route(
+            "/api/voice/settings",
+            get(voice_api::get_settings).put(voice_api::put_settings),
+        )
+        .route("/api/voice/key", post(voice_api::set_key))
+        .route(
+            "/api/voice/history",
+            get(voice_api::get_history).delete(voice_api::clear_history),
+        )
+        .route("/api/voice/history/{id}", delete(voice_api::delete_entry))
+        .route(
+            "/api/voice/history/{id}/reprocess",
+            post(voice_api::reprocess),
+        )
+        .route("/api/voice/stats", get(voice_api::get_stats))
         .merge(upload_route)
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),

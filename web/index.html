@@ -346,6 +346,334 @@
     .ptt-btn.on { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
     .ptt-btn.draining { border-color: #f59e0b; background: #78350f; color: #fbbf24; }
 
+    /* ---- Dictate mode ---------------------------------------------------- */
+    .dictate-scroll {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      display: flex;
+      flex-direction: column;
+      gap: .5rem;
+    }
+    .dictate-result {
+      border: 1px solid var(--line);
+      border-radius: .6rem;
+      background: var(--panel);
+      padding: .55rem .65rem;
+    }
+    .dictate-result-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: .72rem;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: .35rem;
+    }
+    .dictate-text {
+      font-size: .95rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .dictate-copy {
+      border: 1px solid var(--line);
+      background: transparent;
+      color: var(--muted);
+      border-radius: .4rem;
+      padding: .2rem .5rem;
+      font-size: .72rem;
+      font-family: inherit;
+    }
+    .dictate-copy:active { background: var(--idle); }
+    .dictate-guide {
+      border: 1px solid var(--line);
+      border-radius: .6rem;
+      background: var(--panel);
+      padding: .55rem .65rem;
+      font-size: .84rem;
+      color: var(--muted);
+    }
+    .dictate-guide summary {
+      cursor: pointer;
+      color: var(--fg);
+      font-size: .8rem;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    .dictate-guide ol { margin: .4rem 0 .5rem 1.1rem; padding: 0; }
+    .dictate-guide li { margin: .2rem 0; }
+    .dictate-guide p { margin: .45rem 0; }
+    .dictate-url {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: .78rem;
+      color: var(--accent);
+      background: var(--bg);
+      border: 1px solid var(--line);
+      border-radius: .4rem;
+      padding: .4rem .5rem;
+      margin: .3rem 0;
+      word-break: break-all;
+    }
+    .dictate-note { font-size: .78rem; line-height: 1.45; }
+
+    /* Big button sits at the bottom, in thumb reach, with Enter beside it so
+       a dictated line can be sent without leaving the tab. */
+    .dictate-btn-row {
+      display: flex;
+      gap: .4rem;
+      flex: 0 0 auto;
+    }
+    .dictate-btn { min-height: 5rem; }
+    .dictate-enter {
+      flex: 0 0 4.2rem;
+      border-radius: .75rem;
+      border: 1px solid var(--idle);
+      background: var(--idle-bg);
+      color: var(--fg);
+      font-size: 1.5rem;
+      font-family: inherit;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .dictate-enter:active { background: var(--idle); }
+
+    /* ---- Voice: mode chips, settings, history ---------------------------- */
+    /* Same tokens as Files. Nothing new invented -- chips, cards and rows are
+       the .chip / .entry-row / --surface language, restated for voice bits. */
+    .voice-mode-row { flex: 0 0 auto; margin-bottom: 0.15rem; }
+    .chip.chip-mode.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: var(--accent-dim);
+    }
+    /* Which mode produced the transcript, whispered next to the card title. */
+    .voice-tag {
+      margin-left: 0.4rem;
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      color: var(--accent);
+    }
+    /* Non-blocking: the transcript underneath is still good and still copyable. */
+    .voice-warning {
+      margin-bottom: 0.4rem;
+      padding: 0.35rem 0.5rem;
+      border-radius: var(--r-sm);
+      border: 1px solid var(--warn-line);
+      background: rgba(120, 53, 15, 0.25);
+      color: var(--warn);
+      font-size: 0.74rem;
+      line-height: 1.35;
+      text-transform: none;
+      letter-spacing: 0;
+    }
+
+    .voice-card {
+      display: flex;
+      flex-direction: column;
+      gap: var(--s2);
+      padding: var(--s3);
+      border-radius: var(--r-md);
+      border: 1px solid var(--line);
+      background: var(--surface);
+      flex: 0 0 auto;
+    }
+    .voice-label {
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--muted);
+    }
+    .voice-hint { font-size: 0.7rem; color: var(--muted); line-height: 1.35; }
+    .voice-input {
+      width: 100%;
+      min-width: 0;
+      padding: 0.55rem 0.65rem;
+      border-radius: var(--r-md);
+      border: 1px solid var(--line);
+      background: var(--bg);
+      color: var(--fg);
+      font: inherit;
+      font-size: 0.92rem;
+      -webkit-user-select: text;
+      user-select: text;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .voice-input:focus { outline: none; border-color: var(--accent); }
+    textarea.voice-input { min-height: 5rem; resize: vertical; line-height: 1.4; }
+    .voice-row { display: flex; gap: var(--s2); align-items: center; flex: 0 0 auto; }
+    .voice-row .voice-input { flex: 1 1 auto; }
+    .voice-btn {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.3rem;
+      min-height: 2.4rem;
+      padding: 0.5rem 0.8rem;
+      border-radius: var(--r-md);
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--fg);
+      font: inherit;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .voice-btn:active { border-color: var(--accent); color: var(--accent); background: var(--surface-2); }
+    .voice-btn.primary { border-color: var(--accent-dim); color: var(--accent); }
+    .voice-btn.danger { border-color: var(--danger-line); color: var(--danger); background: var(--danger-bg); }
+    .voice-btn.danger:active { border-color: var(--danger); color: #fff; background: rgba(127,29,29,0.32); }
+    .voice-btn.armed { border-color: var(--danger); color: #fff; background: var(--danger); }
+    .voice-btn.wide { width: 100%; }
+    .voice-save { margin-top: var(--s2); margin-bottom: var(--s4); }
+
+    /* Toggle row: label left, pill switch right. Plain tap, never a hold. */
+    .voice-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--s3);
+      width: 100%;
+      min-height: 2.6rem;
+      padding: 0.35rem 0;
+      border: none;
+      background: transparent;
+      color: var(--fg);
+      font: inherit;
+      font-size: 0.88rem;
+      text-align: left;
+      cursor: pointer;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .voice-switch {
+      flex: 0 0 auto;
+      position: relative;
+      width: 2.6rem;
+      height: 1.5rem;
+      border-radius: var(--r-pill);
+      border: 1px solid var(--line);
+      background: var(--bg);
+      transition: background var(--t-fast) ease, border-color var(--t-fast) ease;
+    }
+    .voice-switch::after {
+      content: '';
+      position: absolute;
+      top: 0.15rem;
+      left: 0.18rem;
+      width: 1.05rem;
+      height: 1.05rem;
+      border-radius: 50%;
+      background: var(--muted);
+      transition: transform var(--t-fast) ease, background var(--t-fast) ease;
+    }
+    .voice-toggle[aria-pressed="true"] .voice-switch { background: var(--accent-dim); border-color: var(--accent); }
+    .voice-toggle[aria-pressed="true"] .voice-switch::after { transform: translateX(1.05rem); background: var(--accent); }
+
+    /* Mode / history cards: a tappable head, an expanded body underneath. */
+    .voice-item {
+      display: flex;
+      flex-direction: column;
+      border-radius: var(--r-md);
+      border: 1px solid var(--line);
+      background: var(--surface);
+      overflow: hidden;
+    }
+    .voice-item-head {
+      display: flex;
+      align-items: center;
+      gap: var(--s3);
+      min-height: 48px;
+      padding: 0.5rem 0.6rem;
+      cursor: pointer;
+    }
+    .voice-item-head:active { background: var(--surface-2); }
+    .voice-item-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+    .voice-item-name {
+      font-size: 0.9rem;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .voice-item-meta { font-size: 0.72rem; color: var(--muted); }
+    .voice-item-preview {
+      font-size: 0.78rem;
+      color: var(--muted);
+      line-height: 1.35;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .voice-item-body {
+      display: flex;
+      flex-direction: column;
+      gap: var(--s2);
+      padding: 0 0.6rem 0.6rem;
+      border-top: 1px solid var(--line);
+      padding-top: var(--s3);
+    }
+    .voice-item.active-mode { border-color: var(--accent); }
+    .voice-badge {
+      flex: 0 0 auto;
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--accent);
+      border: 1px solid var(--accent-dim);
+      border-radius: var(--r-pill);
+      padding: 0.1rem 0.4rem;
+    }
+    .voice-text-block {
+      font-size: 0.86rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+      padding: 0.45rem 0.55rem;
+      border-radius: var(--r-sm);
+      border: 1px solid var(--line);
+      background: var(--bg);
+      max-height: 40vh;
+      overflow-y: auto;
+      -webkit-user-select: text;
+      user-select: text;
+    }
+
+    /* Stats header on History: three flat numbers, no chrome. */
+    .voice-stats {
+      display: flex;
+      gap: var(--s2);
+      flex: 0 0 auto;
+    }
+    .voice-stat {
+      flex: 1 1 0;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.1rem;
+      padding: var(--s3) 0.2rem;
+      border-radius: var(--r-md);
+      border: 1px solid var(--line);
+      background: var(--surface);
+    }
+    .voice-stat-num { font-size: 1.15rem; font-weight: 700; }
+    .voice-stat-label {
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      text-align: center;
+    }
+
     .space-btn {
       flex: 0 0 auto;
       height: 5.5vh;
@@ -372,6 +700,9 @@
       align-items: center;
       justify-content: center;
       margin-top: 0.35rem;
+      /* Keep clear of the absolutely-positioned refresh button on the right;
+         padded both sides so the pills stay optically centred. */
+      padding: 0 2.4rem;
     }
     .mode-switch {
       display: flex;
@@ -380,7 +711,11 @@
       border: 1px solid var(--idle);
       border-radius: 999px;
       padding: 0.2rem;
+      max-width: 100%;
+      overflow-x: auto;
+      scrollbar-width: none;
     }
+    .mode-switch::-webkit-scrollbar { display: none; }
     .refresh-btn {
       position: absolute;
       right: 0;
@@ -423,7 +758,10 @@
     .clear-btn:active { background: #7f1d1d; color: #fff; }
     .mode-pill {
       flex: 0 0 auto;
-      padding: 0.25rem 0.9rem;
+      white-space: nowrap;
+      /* Tightened when Dictate made it four pills -- 0.9rem overflowed on a
+         phone and pushed the group under the refresh button. */
+      padding: 0.25rem 0.7rem;
       border-radius: 999px;
       border: none;
       background: transparent;
@@ -1473,6 +1811,83 @@
     <button id="key-space" class="space-btn" type="button">&#x2423; space</button>
   </div>
 
+  <div id="view-dictate" class="view" hidden>
+    <div class="dictate-scroll">
+      <div class="dictate-result" id="dictate-result" hidden>
+        <div class="dictate-result-head">
+          <span>Last transcript<span class="voice-tag" id="dictate-mode-tag" hidden></span></span>
+          <button id="dictate-copy" class="dictate-copy" type="button">copy</button>
+        </div>
+        <div class="voice-warning" id="dictate-warning" hidden></div>
+        <div class="dictate-text" id="dictate-text"></div>
+      </div>
+
+      <details class="dictate-guide">
+        <summary>Custom Button setup &mdash; no web page</summary>
+        <p>
+          Records on the phone and sends it here. Nothing opens on screen, so this is
+          the one to put on the Action Button.
+        </p>
+        <ol>
+          <li>Open <b>Shortcuts</b>, tap <b>+</b></li>
+          <li>Add <b>Record Audio</b>. Tap <b>Show More</b> and set
+              <b>Start Recording</b> to <b>On Tap</b> &mdash; tap once to start, again to stop.</li>
+          <li>Add <b>Get Contents of URL</b> and set:
+            <ul>
+              <li><b>URL</b> &mdash; the address below</li>
+              <li><b>Method</b> &mdash; POST</li>
+              <li><b>Headers</b> &mdash; add <code>x-bridge-pin</code> set to your bridge PIN</li>
+              <li><b>Request Body</b> &mdash; File, then pick <b>Recorded Audio</b></li>
+            </ul>
+          </li>
+          <li>Name it <b>Dictate</b>, then <b>Settings &rarr; Action Button &rarr; Shortcut &rarr; Dictate</b></li>
+        </ol>
+        <div class="dictate-url" id="dictate-api-url"></div>
+        <button id="dictate-api-copy" class="dictate-copy" type="button">copy address</button>
+        <p class="dictate-note">
+          Transcription runs on this PC and the text is typed into whatever window
+          has focus, plus copied to the PC clipboard. Nothing leaves your machine.
+        </p>
+      </details>
+
+      <details class="dictate-guide">
+        <summary>Alternative &mdash; open this tab instead</summary>
+        <p>
+          Opens the bridge and starts recording live. Skips the upload, so the
+          transcript comes back a little sooner, but Safari appears each time.
+        </p>
+        <ol>
+          <li>Open <b>Shortcuts</b>, tap <b>+</b></li>
+          <li><b>Add Action</b> &rarr; search <b>Open URLs</b></li>
+          <li>Paste the address below</li>
+        </ol>
+        <div class="dictate-url" id="dictate-url"></div>
+        <button id="dictate-url-copy" class="dictate-copy" type="button">copy address</button>
+        <p class="dictate-note">
+          No Action Button? <b>Settings &rarr; Accessibility &rarr; Touch &rarr; Back Tap</b>
+          works for either shortcut.
+        </p>
+      </details>
+    </div>
+
+    <!-- Which mode the next dictation runs through. Plain taps only. -->
+    <div class="chip-row voice-mode-row" id="dictate-modes" hidden></div>
+
+    <span class="ptt-state" id="dictate-state">tap to talk</span>
+    <div class="dictate-btn-row">
+      <button id="dictate-btn" class="ptt-btn dictate-btn" type="button">
+        <svg class="ptt-mic" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="9" y="3" width="6" height="11" rx="3"/>
+          <path d="M6 12 v0.5 a6 6 0 0 0 12 0 V12" fill="none"/>
+          <line x1="12" y1="18.5" x2="12" y2="21.5"/>
+          <line x1="9" y1="21.5" x2="15" y2="21.5"/>
+        </svg>
+        <span id="dictate-label">Dictate</span>
+      </button>
+      <button id="dictate-enter" class="dictate-enter" type="button" aria-label="Press Enter on the PC">&#x21B5;</button>
+    </div>
+  </div>
+
   <div id="view-files" class="view" hidden>
     <div class="files-scroll" id="files-scroll">
       <div class="ptr-hint" id="ptr-hint" hidden>pull to refresh</div>
@@ -1561,6 +1976,80 @@
         </div>
       </div>
       <div class="entry-list" id="history-list" hidden></div>
+    </div>
+  </div>
+
+  <!-- Voice settings: provider + key, modes, replacements, vocabulary. All
+       edits are local until "Save settings" PUTs the whole document back. -->
+  <div id="view-settings" class="view" hidden>
+    <div class="files-scroll">
+      <div class="files-section-title">AI provider</div>
+      <div class="chip-row" id="voice-provider-row"></div>
+      <div class="voice-card">
+        <label class="voice-label" for="voice-model">Model</label>
+        <input id="voice-model" class="voice-input" type="text" autocomplete="off"
+               autocapitalize="off" spellcheck="false">
+        <div class="voice-label" id="voice-key-label">API key</div>
+        <div class="voice-row">
+          <input id="voice-key" class="voice-input" type="password" autocomplete="off"
+                 autocapitalize="off" spellcheck="false" placeholder="Paste your API key">
+          <button id="voice-key-save" class="voice-btn" type="button">Save key</button>
+        </div>
+        <div class="voice-hint" id="voice-key-hint">Saving an empty box clears the stored key.</div>
+      </div>
+
+      <div class="files-section-head">
+        <div class="files-section-title">Modes</div>
+        <button id="voice-mode-add" class="files-see-all" type="button">
+          <svg class="ic" aria-hidden="true"><use href="#ic-plus"/></svg> add
+        </button>
+      </div>
+      <div class="entry-list" id="voice-modes-list"></div>
+
+      <div class="files-section-head">
+        <div class="files-section-title">Replacements</div>
+        <button id="voice-repl-add" class="files-see-all" type="button">
+          <svg class="ic" aria-hidden="true"><use href="#ic-plus"/></svg> add
+        </button>
+      </div>
+      <div class="entry-list" id="voice-repl-list"></div>
+
+      <div class="files-section-title">Vocabulary</div>
+      <div class="voice-row">
+        <input id="voice-vocab-input" class="voice-input" type="text" placeholder="Add a word or name"
+               autocomplete="off" autocapitalize="off" spellcheck="false">
+        <button id="voice-vocab-add" class="voice-btn" type="button">Add</button>
+      </div>
+      <div class="chip-row" id="voice-vocab-list"></div>
+
+      <div class="files-section-title">Behaviour</div>
+      <div class="voice-card">
+        <button id="voice-auto-mode" class="voice-toggle" type="button" aria-pressed="false">
+          <span>Auto-pick mode from the focused app</span>
+          <span class="voice-switch"></span>
+        </button>
+        <label class="voice-label" for="voice-history-cap">History cap (entries kept)</label>
+        <input id="voice-history-cap" class="voice-input" type="number" inputmode="numeric"
+               min="0" max="10000" step="1">
+      </div>
+
+      <button id="voice-save" class="voice-btn primary wide voice-save" type="button">Save settings</button>
+    </div>
+  </div>
+
+  <!-- Voice history: stats, search, newest-first list with raw/processed text. -->
+  <div id="view-history" class="view" hidden>
+    <div class="voice-stats" id="voice-stats" hidden></div>
+    <div class="files-search-row">
+      <input id="voice-search" class="files-search-input" type="search" placeholder="Search dictations…"
+             autocomplete="off" autocapitalize="off" spellcheck="false">
+      <svg class="ic files-search-icon" aria-hidden="true"><use href="#ic-search"/></svg>
+    </div>
+    <div class="files-scroll">
+      <div class="entry-list" id="voice-history-list"></div>
+      <button id="voice-history-clear" class="voice-btn danger wide voice-save" type="button" hidden>
+        <svg class="ic" aria-hidden="true"><use href="#ic-trash"/></svg> Clear all history
+      </button>
     </div>
   </div>
 
@@ -1711,7 +2200,11 @@
     <div class="mode-switch">
       <button id="mode-bridge" class="mode-pill active" type="button">Bridge</button>
       <button id="mode-ptt" class="mode-pill" type="button">PTT</button>
+      <button id="mode-dictate" class="mode-pill" type="button">Dictate</button>
       <button id="mode-files" class="mode-pill" type="button">Files</button>
+      <button id="mode-history" class="mode-pill" type="button">History</button>
+      <!-- Gear rather than "Settings": six word-pills overflow a phone. -->
+      <button id="mode-settings" class="mode-pill" type="button" aria-label="Voice settings">&#9881;&#65038;</button>
     </div>
     <button id="refresh-btn" class="refresh-btn" type="button" aria-label="Reload page">&#x21BB;</button>
   </div>
