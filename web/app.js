@@ -946,7 +946,15 @@ function openPttWs() {
     const view = dictateView(msg);
     if (!view) return;
     setPttUi(view.label, view.state, view.cls);
-    if (view.text !== null) showDictateResult(view.text);
+    if (msg.state === 'done') {
+      // Carries mode/warning as well as text, so it owns the result card.
+      const done = showDictateDone(msg);
+      // A failed AI step is not a failed dictation -- say what actually
+      // happened, but only when there IS a warning to explain.
+      if (done.notice) setPttUi(view.label, done.state, view.cls);
+    } else if (view.text !== null) {
+      showDictateResult(view.text);
+    }
   };
 
   pttWs.onclose = () => {
@@ -3412,12 +3420,1027 @@ function exitFilesMode() {
   stopSessionsRefresh();
 }
 
+// --- voice-ui-pure (pure; tested by tests/voice-ui.test.mjs) ---
+// No DOM/globals in here -- same discipline as dictate-ui-pure above.
+
+const VOICE_PROVIDERS = ['none', 'anthropic', 'openai', 'gemini', 'openrouter'];
+const VOICE_PROVIDER_LABELS = {
+  none: 'None',
+  anthropic: 'Claude',
+  openai: 'OpenAI',
+  gemini: 'Gemini',
+  openrouter: 'OpenRouter',
+};
+const VOICE_HISTORY_CAP_DEFAULT = 200;
+const VOICE_PREVIEW_CHARS = 90;
+
+function voiceNormalizeProvider(p) {
+  const s = String(p == null ? '' : p);
+  return VOICE_PROVIDERS.indexOf(s) === -1 ? 'none' : s;
+}
+
+function voiceProviderLabel(p) {
+  return VOICE_PROVIDER_LABELS[voiceNormalizeProvider(p)];
+}
+
+// The one function that decides what leaves the phone on a settings save.
+// It is deliberately a whitelist rebuild rather than a copy-with-deletes: an
+// API key or a has_key map can never survive a round trip through here, no
+// matter what junk the caller hands it.
+function voiceSettingsPayload(state) {
+  const s = state || {};
+
+  const modes = (Array.isArray(s.modes) ? s.modes : []).map((m) => ({
+    id: String((m && m.id) || '').trim(),
+    name: String((m && m.name) || '').trim(),
+    prompt: String((m && m.prompt) || ''),
+    apps: (Array.isArray(m && m.apps) ? m.apps : []).map((a) => String(a).trim()).filter(Boolean),
+    use_replacements: !!(m && m.use_replacements),
+    use_vocabulary: !!(m && m.use_vocabulary),
+    use_context: !!(m && m.use_context),
+  })).filter((m) => m.id);
+
+  // An active_mode pointing at a deleted mode would leave the phone with no
+  // usable selection, so it falls back to the first mode rather than nothing.
+  const ids = modes.map((m) => m.id);
+  const wanted = String(s.active_mode == null ? '' : s.active_mode);
+  const activeMode = ids.indexOf(wanted) !== -1 ? wanted : (ids.length ? ids[0] : '');
+
+  const replacements = (Array.isArray(s.replacements) ? s.replacements : [])
+    .map((r) => ({ from: String((r && r.from) || '').trim(), to: String((r && r.to) || '') }))
+    .filter((r) => r.from);
+
+  const vocabulary = [];
+  const seenVocab = {};
+  (Array.isArray(s.vocabulary) ? s.vocabulary : []).forEach((v) => {
+    const t = String(v == null ? '' : v).trim();
+    if (!t) return;
+    const k = t.toLowerCase();
+    if (seenVocab[k]) return;
+    seenVocab[k] = true;
+    vocabulary.push(t);
+  });
+
+  const capRaw = Number(s.history_cap);
+  const historyCap = isFinite(capRaw)
+    ? Math.min(10000, Math.max(0, Math.round(capRaw)))
+    : VOICE_HISTORY_CAP_DEFAULT;
+
+  const ai = s.ai || {};
+  return {
+    modes,
+    active_mode: activeMode,
+    auto_mode: !!s.auto_mode,
+    replacements,
+    vocabulary,
+    history_cap: historyCap,
+    ai: {
+      provider: voiceNormalizeProvider(ai.provider),
+      model: String(ai.model == null ? '' : ai.model).trim(),
+    },
+  };
+}
+
+// The API never hands back a key, only whether one is stored -- so the field
+// advertises replacement rather than pretending to show a value.
+function voiceKeyFieldState(hasKey, provider) {
+  const p = voiceNormalizeProvider(provider);
+  if (p === 'none') {
+    return { enabled: false, saved: false, label: 'No API key needed', placeholder: '' };
+  }
+  const saved = !!(hasKey && hasKey[p]);
+  if (saved) {
+    return {
+      enabled: true,
+      saved: true,
+      label: 'Key saved ✓ (replace?)',
+      placeholder: 'Enter a new key to replace it',
+    };
+  }
+  return { enabled: true, saved: false, label: 'API key', placeholder: 'Paste your API key' };
+}
+
+function voiceModelPlaceholder(defaults, provider) {
+  const p = voiceNormalizeProvider(provider);
+  if (p === 'none') return '';
+  const d = defaults && defaults[p];
+  return (typeof d === 'string' && d) ? d : 'provider default';
+}
+
+// History timestamps arrive as an epoch, but the unit isn't pinned by the
+// contract. Anything below ~1973-in-milliseconds has to be seconds.
+function voiceAtMs(at) {
+  const t = Number(at);
+  if (!isFinite(t) || t <= 0) return NaN;
+  return t < 1e11 ? t * 1000 : t;
+}
+
+function voiceRelativeTime(at, now) {
+  const t = voiceAtMs(at);
+  const n = Number(now);
+  if (!isFinite(t) || !isFinite(n)) return '';
+  const secs = Math.floor((n - t) / 1000);
+  if (secs < 10) return 'just now'; // also swallows small clock skew
+  if (secs < 60) return secs + 's ago';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return mins + 'm ago';
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + 'h ago';
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return days + 'd ago';
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) return weeks + 'w ago';
+  return Math.floor(days / 30) + 'mo ago';
+}
+
+// Compact clip length for a list row (dictateDuration's phrasing is for the
+// status line and reads wrong inside a dense list).
+function voiceClipLength(seconds) {
+  const s = Number(seconds);
+  if (!isFinite(s) || s <= 0) return '—';
+  if (s < 60) return (Math.round(s * 10) / 10) + 's';
+  let mins = Math.floor(s / 60);
+  let rem = Math.round(s % 60);
+  if (rem === 60) { mins += 1; rem = 0; }
+  return rem === 0 ? mins + 'm' : mins + 'm ' + rem + 's';
+}
+
+function voicePreview(text, max) {
+  const limit = (typeof max === 'number' && max > 0) ? Math.floor(max) : VOICE_PREVIEW_CHARS;
+  const flat = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
+  if (!flat) return '(no text)';
+  if (flat.length <= limit) return flat;
+  // Back off to the last whole word so a preview never ends mid-word -- but
+  // only if that still leaves a useful amount of text.
+  const cut = flat.slice(0, limit - 1);
+  const lastSpace = cut.lastIndexOf(' ');
+  const body = lastSpace >= limit * 0.5 ? cut.slice(0, lastSpace) : cut.replace(/\s+$/, '');
+  return body + '…';
+}
+
+function voiceHistoryRow(entry, now) {
+  const e = entry || {};
+  const text = typeof e.text === 'string' ? e.text : '';
+  const raw = typeof e.raw === 'string' ? e.raw : '';
+  return {
+    id: String(e.id == null ? '' : e.id),
+    when: voiceRelativeTime(e.at, now),
+    mode: (typeof e.mode === 'string' && e.mode) ? e.mode : 'raw',
+    duration: voiceClipLength(e.seconds),
+    preview: voicePreview(text || raw),
+  };
+}
+
+// A warning means the AI step fell over, NOT that dictation failed: the raw
+// transcript still came through and must stay on screen and copyable.
+function voiceDoneView(msg) {
+  const m = msg || {};
+  const text = typeof m.text === 'string' ? m.text : '';
+  const raw = typeof m.raw === 'string' ? m.raw : '';
+  const warning = (typeof m.warning === 'string' && m.warning.trim()) ? m.warning.trim() : null;
+  const mode = (typeof m.mode === 'string' && m.mode.trim()) ? m.mode.trim() : null;
+  let state;
+  if (text) state = warning ? 'delivered raw transcript' : 'typed into your PC';
+  else state = warning || 'nothing heard';
+  return {
+    show: text.length > 0,
+    text,
+    raw: (raw && raw !== text) ? raw : null,
+    mode,
+    notice: warning,
+    copyable: text.length > 0,
+    state,
+  };
+}
+
+// Instant narrowing while the server's ?q= round trip is still in flight.
+function voiceFilterHistory(entries, q) {
+  const list = Array.isArray(entries) ? entries : [];
+  const needle = String(q == null ? '' : q).trim().toLowerCase();
+  if (!needle) return list.slice();
+  return list.filter((e) => {
+    if (!e) return false;
+    return [e.text, e.raw, e.mode].some(
+      (f) => typeof f === 'string' && f.toLowerCase().indexOf(needle) !== -1,
+    );
+  });
+}
+
+function voiceModeChips(modes, activeId) {
+  const list = (Array.isArray(modes) ? modes : []).filter((m) => m && m.id);
+  const wanted = String(activeId == null ? '' : activeId);
+  const hasActive = list.some((m) => String(m.id) === wanted);
+  return list.map((m, i) => ({
+    id: String(m.id),
+    name: String(m.name || m.id),
+    active: hasActive ? String(m.id) === wanted : i === 0,
+  }));
+}
+
+function voiceStatCards(stats) {
+  const s = stats || {};
+  const n = (v) => {
+    const x = Number(v);
+    return isFinite(x) && x > 0 ? String(Math.round(x)) : '0';
+  };
+  return [
+    { label: 'dictations', value: n(s.total) },
+    { label: 'words this week', value: n(s.words_this_week) },
+    { label: 'minutes saved', value: n(s.minutes_saved) },
+  ];
+}
+
+// Turns a free-typed mode name into a stable id. Suffixed with a short
+// timestamp so two modes called "Email" don't collide.
+function voiceModeId(name, stamp) {
+  const slug = String(name == null ? '' : name)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 24);
+  const suffix = Number(stamp).toString(36).slice(-4);
+  return (slug || 'mode') + '-' + suffix;
+}
+
+// --- end voice-ui-pure ---
+
+// ---- Voice settings + history views ---------------------------------------
+// Both views hang off /api/voice/*. Settings are edited into a local buffer
+// (already in PUT shape, so a save can never leak a key) and pushed on Save.
+
+const dictateModesEl = document.getElementById('dictate-modes');
+const dictateWarningEl = document.getElementById('dictate-warning');
+const dictateModeTagEl = document.getElementById('dictate-mode-tag');
+
+const viewSettings = document.getElementById('view-settings');
+const viewHistory = document.getElementById('view-history');
+
+const voiceProviderRowEl = document.getElementById('voice-provider-row');
+const voiceModelInput = document.getElementById('voice-model');
+const voiceKeyLabelEl = document.getElementById('voice-key-label');
+const voiceKeyInput = document.getElementById('voice-key');
+const voiceKeySaveBtn = document.getElementById('voice-key-save');
+const voiceModesListEl = document.getElementById('voice-modes-list');
+const voiceReplListEl = document.getElementById('voice-repl-list');
+const voiceVocabInput = document.getElementById('voice-vocab-input');
+const voiceVocabListEl = document.getElementById('voice-vocab-list');
+const voiceAutoModeBtn = document.getElementById('voice-auto-mode');
+const voiceHistoryCapInput = document.getElementById('voice-history-cap');
+const voiceSaveBtn = document.getElementById('voice-save');
+
+const voiceStatsEl = document.getElementById('voice-stats');
+const voiceSearchInput = document.getElementById('voice-search');
+const voiceHistoryListEl = document.getElementById('voice-history-list');
+const voiceHistoryClearBtn = document.getElementById('voice-history-clear');
+
+let voiceSettings = null;      // edit buffer, always in PUT shape
+let voiceHasKey = {};          // provider -> bool, never a key itself
+let voiceDefaultModels = {};
+let voiceSettingsLoaded = false;
+let voiceModeExpandedId = null;
+let voiceHistoryEntries = [];
+let voiceHistoryExpandedId = null;
+let voiceSearchTimer = null;
+const voiceArmed = new Set(); // two-tap confirm keys, same idea as killArmed
+
+function voiceSetValue(el, v) {
+  // Never clobber what the user is mid-way through typing.
+  if (el && el.value !== v) el.value = v;
+}
+
+async function loadVoiceSettings(force) {
+  if (voiceSettingsLoaded && !force) return voiceSettings;
+  try {
+    const data = await apiFetch('/api/voice/settings');
+    voiceApplySettings(data);
+    voiceSettingsLoaded = true;
+  } catch (_) { /* apiFetch already toasted */ }
+  return voiceSettings;
+}
+
+function voiceApplySettings(data) {
+  const d = data || {};
+  const ai = d.ai || {};
+  voiceHasKey = ai.has_key || {};
+  voiceDefaultModels = ai.default_models || {};
+  voiceSettings = voiceSettingsPayload(d);
+  voiceArmed.clear(); // a half-armed delete must not survive a reload
+  renderVoiceModeChips();
+  renderVoiceSettings();
+}
+
+async function saveVoiceSettings(silent) {
+  if (!voiceSettings) return false;
+  const payload = voiceSettingsPayload(voiceSettings);
+  try {
+    const data = await apiFetch('/api/voice/settings', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+    voiceApplySettings(data);
+    if (!silent) toast('settings saved');
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+// ---- Dictate tab: mode chips ----------------------------------------------
+
+function renderVoiceModeChips() {
+  if (!dictateModesEl) return;
+  if (!voiceSettings) { dictateModesEl.hidden = true; return; }
+  const chips = voiceModeChips(voiceSettings.modes, voiceSettings.active_mode);
+  dictateModesEl.innerHTML = '';
+  if (!chips.length) {
+    const empty = document.createElement('div');
+    empty.className = 'files-muted-line';
+    empty.textContent = 'No modes yet';
+    dictateModesEl.appendChild(empty);
+    dictateModesEl.hidden = false;
+    return;
+  }
+  chips.forEach((c) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip chip-mode' + (c.active ? ' active' : '');
+    b.dataset.modeId = c.id;
+    b.textContent = c.name;
+    dictateModesEl.appendChild(b);
+  });
+  dictateModesEl.hidden = false;
+}
+
+dictateModesEl.addEventListener('click', (e) => {
+  try {
+    const btn = e.target.closest('[data-mode-id]');
+    if (!btn || !voiceSettings) return;
+    voiceSettings.active_mode = btn.dataset.modeId;
+    renderVoiceModeChips();
+    renderVoiceModes();
+    saveVoiceSettings(true);
+  } catch (err) { toast(String(err)); }
+});
+
+// Called for every dictation-done frame. Returns the view so the caller can
+// reuse the phrasing for the status line.
+function showDictateDone(msg) {
+  const v = voiceDoneView(msg);
+  dictateWarningEl.textContent = v.notice || '';
+  dictateWarningEl.hidden = !v.notice;
+  dictateModeTagEl.textContent = v.mode || '';
+  dictateModeTagEl.hidden = !v.mode;
+  // A warning with no text still deserves the card -- otherwise the only
+  // signal that the AI step died would be a status line that scrolls away.
+  if (!v.show && !v.notice) {
+    dictateResultEl.hidden = true;
+    return v;
+  }
+  dictateTextEl.textContent = v.text;
+  dictateResultEl.hidden = false;
+  return v;
+}
+
+// ---- Settings: provider + key ---------------------------------------------
+
+function renderVoiceProviders() {
+  voiceProviderRowEl.innerHTML = '';
+  const current = voiceSettings ? voiceSettings.ai.provider : 'none';
+  VOICE_PROVIDERS.forEach((p) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip chip-mode' + (p === current ? ' active' : '');
+    b.dataset.provider = p;
+    b.textContent = VOICE_PROVIDER_LABELS[p];
+    voiceProviderRowEl.appendChild(b);
+  });
+}
+
+function renderVoiceKeyField() {
+  const provider = voiceSettings ? voiceSettings.ai.provider : 'none';
+  const st = voiceKeyFieldState(voiceHasKey, provider);
+  voiceKeyLabelEl.textContent = st.label;
+  voiceKeyInput.placeholder = st.placeholder;
+  voiceKeyInput.disabled = !st.enabled;
+  voiceKeySaveBtn.disabled = !st.enabled;
+  voiceModelInput.placeholder = voiceModelPlaceholder(voiceDefaultModels, provider);
+}
+
+voiceProviderRowEl.addEventListener('click', (e) => {
+  try {
+    const b = e.target.closest('[data-provider]');
+    if (!b || !voiceSettings) return;
+    voiceSettings.ai.provider = voiceNormalizeProvider(b.dataset.provider);
+    voiceKeyInput.value = '';
+    renderVoiceProviders();
+    renderVoiceKeyField();
+  } catch (err) { toast(String(err)); }
+});
+
+voiceModelInput.addEventListener('input', () => {
+  if (voiceSettings) voiceSettings.ai.model = voiceModelInput.value;
+});
+
+voiceKeySaveBtn.addEventListener('click', async () => {
+  if (!voiceSettings) return;
+  const provider = voiceSettings.ai.provider;
+  if (provider === 'none') { toast('pick a provider first'); return; }
+  const key = voiceKeyInput.value;
+  try {
+    const res = await apiFetch('/api/voice/key', {
+      method: 'POST',
+      body: JSON.stringify({ provider, key }),
+    });
+    if (res && res.has_key) voiceHasKey = res.has_key;
+    voiceKeyInput.value = '';
+    renderVoiceKeyField();
+    toast(key.trim() ? 'key saved' : 'key cleared');
+  } catch (_) { /* toasted */ }
+});
+
+// ---- Settings: modes -------------------------------------------------------
+
+const VOICE_MODE_FLAGS = [
+  { flag: 'use_replacements', label: 'Apply replacements' },
+  { flag: 'use_vocabulary', label: 'Apply vocabulary' },
+  { flag: 'use_context', label: 'Use screen context' },
+];
+
+function voiceToggleButton(label, on, dataset) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'voice-toggle';
+  b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  Object.keys(dataset).forEach((k) => { b.dataset[k] = dataset[k]; });
+  const span = document.createElement('span');
+  span.textContent = label;
+  const sw = document.createElement('span');
+  sw.className = 'voice-switch';
+  b.appendChild(span);
+  b.appendChild(sw);
+  return b;
+}
+
+function buildVoiceModeEditor(m) {
+  const body = document.createElement('div');
+  body.className = 'voice-item-body';
+
+  const nameLabel = document.createElement('div');
+  nameLabel.className = 'voice-label';
+  nameLabel.textContent = 'Name';
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.className = 'voice-input';
+  nameInput.value = m.name;
+  nameInput.dataset.field = 'name';
+  nameInput.dataset.id = m.id;
+  nameInput.autocapitalize = 'off';
+  nameInput.spellcheck = false;
+
+  const promptLabel = document.createElement('div');
+  promptLabel.className = 'voice-label';
+  promptLabel.textContent = 'Prompt';
+  const promptInputEl = document.createElement('textarea');
+  promptInputEl.className = 'voice-input';
+  promptInputEl.value = m.prompt;
+  promptInputEl.dataset.field = 'prompt';
+  promptInputEl.dataset.id = m.id;
+
+  const appsLabel = document.createElement('div');
+  appsLabel.className = 'voice-label';
+  appsLabel.textContent = 'Match these apps (comma separated)';
+  const appsInput = document.createElement('input');
+  appsInput.type = 'text';
+  appsInput.className = 'voice-input';
+  appsInput.value = m.apps.join(', ');
+  appsInput.dataset.field = 'apps';
+  appsInput.dataset.id = m.id;
+  appsInput.placeholder = 'Slack, Mail, Code';
+  appsInput.autocapitalize = 'off';
+  appsInput.spellcheck = false;
+
+  body.appendChild(nameLabel);
+  body.appendChild(nameInput);
+  body.appendChild(promptLabel);
+  body.appendChild(promptInputEl);
+  body.appendChild(appsLabel);
+  body.appendChild(appsInput);
+
+  VOICE_MODE_FLAGS.forEach((f) => {
+    body.appendChild(voiceToggleButton(f.label, !!m[f.flag], {
+      action: 'mode-toggle', id: m.id, flag: f.flag,
+    }));
+  });
+
+  const row = document.createElement('div');
+  row.className = 'voice-row';
+  if (voiceSettings.active_mode !== m.id) {
+    const act = document.createElement('button');
+    act.type = 'button';
+    act.className = 'voice-btn';
+    act.dataset.action = 'mode-activate';
+    act.dataset.id = m.id;
+    act.textContent = 'Make active';
+    row.appendChild(act);
+  }
+  const del = document.createElement('button');
+  del.type = 'button';
+  del.className = 'voice-btn danger';
+  del.dataset.action = 'mode-delete';
+  del.dataset.id = m.id;
+  del.textContent = voiceArmed.has('mode:' + m.id) ? 'Sure?' : 'Delete';
+  if (voiceArmed.has('mode:' + m.id)) del.classList.add('armed');
+  row.appendChild(del);
+  body.appendChild(row);
+
+  return body;
+}
+
+function renderVoiceModes() {
+  voiceModesListEl.innerHTML = '';
+  const modes = voiceSettings ? voiceSettings.modes : [];
+  if (!modes.length) {
+    const empty = document.createElement('div');
+    empty.className = 'files-muted-line';
+    empty.textContent = 'No modes';
+    voiceModesListEl.appendChild(empty);
+    return;
+  }
+  modes.forEach((m) => {
+    const card = document.createElement('div');
+    card.className = 'voice-item' + (m.id === voiceSettings.active_mode ? ' active-mode' : '');
+
+    const head = document.createElement('div');
+    head.className = 'voice-item-head';
+    head.dataset.action = 'mode-expand';
+    head.dataset.id = m.id;
+
+    const main = document.createElement('div');
+    main.className = 'voice-item-main';
+    const name = document.createElement('div');
+    name.className = 'voice-item-name';
+    name.textContent = m.name || m.id;
+    const meta = document.createElement('div');
+    meta.className = 'voice-item-meta';
+    meta.textContent = m.apps.length ? m.apps.join(', ') : 'any app';
+    main.appendChild(name);
+    main.appendChild(meta);
+    head.appendChild(main);
+
+    if (m.id === voiceSettings.active_mode) {
+      const badge = document.createElement('span');
+      badge.className = 'voice-badge';
+      badge.textContent = 'active';
+      head.appendChild(badge);
+    }
+    card.appendChild(head);
+    if (voiceModeExpandedId === m.id) card.appendChild(buildVoiceModeEditor(m));
+    voiceModesListEl.appendChild(card);
+  });
+}
+
+voiceModesListEl.addEventListener('input', (e) => {
+  const el = e.target.closest('[data-field]');
+  if (!el || !voiceSettings) return;
+  const m = voiceSettings.modes.find((x) => x.id === el.dataset.id);
+  if (!m) return;
+  if (el.dataset.field === 'apps') {
+    m.apps = el.value.split(',').map((s) => s.trim()).filter(Boolean);
+  } else {
+    m[el.dataset.field] = el.value;
+  }
+});
+
+voiceModesListEl.addEventListener('click', (e) => {
+  try {
+    const t = e.target.closest('[data-action]');
+    if (!t || !voiceSettings) return;
+    const id = t.dataset.id;
+    const action = t.dataset.action;
+    if (action === 'mode-expand') {
+      voiceModeExpandedId = voiceModeExpandedId === id ? null : id;
+      voiceArmed.delete('mode:' + id);
+      renderVoiceModes();
+    } else if (action === 'mode-toggle') {
+      const m = voiceSettings.modes.find((x) => x.id === id);
+      if (!m) return;
+      m[t.dataset.flag] = !m[t.dataset.flag];
+      t.setAttribute('aria-pressed', m[t.dataset.flag] ? 'true' : 'false');
+    } else if (action === 'mode-activate') {
+      voiceSettings.active_mode = id;
+      renderVoiceModes();
+      renderVoiceModeChips();
+    } else if (action === 'mode-delete') {
+      // Two-tap confirm -- browser modals wedge this app on iOS.
+      const key = 'mode:' + id;
+      if (!voiceArmed.has(key)) {
+        voiceArmed.add(key);
+        t.classList.add('armed');
+        t.textContent = 'Sure?';
+        return;
+      }
+      voiceArmed.delete(key);
+      voiceSettings.modes = voiceSettings.modes.filter((x) => x.id !== id);
+      if (voiceSettings.active_mode === id) {
+        voiceSettings.active_mode = voiceSettings.modes.length ? voiceSettings.modes[0].id : '';
+      }
+      voiceModeExpandedId = null;
+      renderVoiceModes();
+      renderVoiceModeChips();
+    }
+  } catch (err) { toast(String(err)); }
+});
+
+document.getElementById('voice-mode-add').addEventListener('click', async () => {
+  if (!voiceSettings) return;
+  const name = await showPrompt('New mode name', '');
+  if (!name) return;
+  const id = voiceModeId(name, Date.now());
+  voiceSettings.modes.push({
+    id,
+    name,
+    prompt: '',
+    apps: [],
+    use_replacements: true,
+    use_vocabulary: true,
+    use_context: false,
+  });
+  if (!voiceSettings.active_mode) voiceSettings.active_mode = id;
+  voiceModeExpandedId = id;
+  renderVoiceModes();
+  renderVoiceModeChips();
+});
+
+// ---- Settings: replacements + vocabulary -----------------------------------
+
+function renderVoiceReplacements() {
+  voiceReplListEl.innerHTML = '';
+  const list = voiceSettings ? voiceSettings.replacements : [];
+  if (!list.length) {
+    const empty = document.createElement('div');
+    empty.className = 'files-muted-line';
+    empty.textContent = 'No replacements';
+    voiceReplListEl.appendChild(empty);
+    return;
+  }
+  list.forEach((r, i) => {
+    const row = document.createElement('div');
+    row.className = 'voice-row';
+    const from = document.createElement('input');
+    from.type = 'text';
+    from.className = 'voice-input';
+    from.value = r.from;
+    from.placeholder = 'heard';
+    from.dataset.replField = 'from';
+    from.dataset.index = String(i);
+    from.autocapitalize = 'off';
+    from.spellcheck = false;
+    const arrow = document.createElement('span');
+    arrow.className = 'voice-label';
+    arrow.textContent = '→';
+    const to = document.createElement('input');
+    to.type = 'text';
+    to.className = 'voice-input';
+    to.value = r.to;
+    to.placeholder = 'typed';
+    to.dataset.replField = 'to';
+    to.dataset.index = String(i);
+    to.autocapitalize = 'off';
+    to.spellcheck = false;
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'voice-btn';
+    del.dataset.action = 'repl-del';
+    del.dataset.index = String(i);
+    del.textContent = '×';
+    row.appendChild(from);
+    row.appendChild(arrow);
+    row.appendChild(to);
+    row.appendChild(del);
+    voiceReplListEl.appendChild(row);
+  });
+}
+
+voiceReplListEl.addEventListener('input', (e) => {
+  const el = e.target.closest('[data-repl-field]');
+  if (!el || !voiceSettings) return;
+  const r = voiceSettings.replacements[Number(el.dataset.index)];
+  if (!r) return;
+  r[el.dataset.replField] = el.value;
+});
+
+voiceReplListEl.addEventListener('click', (e) => {
+  try {
+    const t = e.target.closest('[data-action="repl-del"]');
+    if (!t || !voiceSettings) return;
+    voiceSettings.replacements.splice(Number(t.dataset.index), 1);
+    renderVoiceReplacements();
+  } catch (err) { toast(String(err)); }
+});
+
+document.getElementById('voice-repl-add').addEventListener('click', () => {
+  if (!voiceSettings) return;
+  voiceSettings.replacements.push({ from: '', to: '' });
+  renderVoiceReplacements();
+});
+
+function renderVoiceVocab() {
+  voiceVocabListEl.innerHTML = '';
+  const list = voiceSettings ? voiceSettings.vocabulary : [];
+  if (!list.length) {
+    const empty = document.createElement('div');
+    empty.className = 'files-muted-line';
+    empty.textContent = 'No vocabulary terms';
+    voiceVocabListEl.appendChild(empty);
+    return;
+  }
+  list.forEach((v, i) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'chip';
+    chip.dataset.action = 'vocab-del';
+    chip.dataset.index = String(i);
+    chip.textContent = v + '  ×';
+    voiceVocabListEl.appendChild(chip);
+  });
+}
+
+voiceVocabListEl.addEventListener('click', (e) => {
+  try {
+    const t = e.target.closest('[data-action="vocab-del"]');
+    if (!t || !voiceSettings) return;
+    voiceSettings.vocabulary.splice(Number(t.dataset.index), 1);
+    renderVoiceVocab();
+  } catch (err) { toast(String(err)); }
+});
+
+function voiceAddVocab() {
+  if (!voiceSettings) return;
+  const term = voiceVocabInput.value.trim();
+  if (!term) return;
+  voiceSettings.vocabulary.push(term);
+  voiceSettings.vocabulary = voiceSettingsPayload(voiceSettings).vocabulary; // dedupe
+  voiceVocabInput.value = '';
+  renderVoiceVocab();
+}
+
+document.getElementById('voice-vocab-add').addEventListener('click', voiceAddVocab);
+voiceVocabInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); voiceAddVocab(); }
+});
+
+// ---- Settings: behaviour + save -------------------------------------------
+
+voiceAutoModeBtn.addEventListener('click', () => {
+  if (!voiceSettings) return;
+  voiceSettings.auto_mode = !voiceSettings.auto_mode;
+  voiceAutoModeBtn.setAttribute('aria-pressed', voiceSettings.auto_mode ? 'true' : 'false');
+});
+
+voiceHistoryCapInput.addEventListener('input', () => {
+  if (voiceSettings) voiceSettings.history_cap = voiceHistoryCapInput.value;
+});
+
+voiceSaveBtn.addEventListener('click', () => { saveVoiceSettings(false); });
+
+function renderVoiceSettings() {
+  renderVoiceProviders();
+  renderVoiceKeyField();
+  if (voiceSettings) {
+    voiceSetValue(voiceModelInput, voiceSettings.ai.model);
+    voiceSetValue(voiceHistoryCapInput, String(voiceSettings.history_cap));
+    voiceAutoModeBtn.setAttribute('aria-pressed', voiceSettings.auto_mode ? 'true' : 'false');
+  }
+  renderVoiceModes();
+  renderVoiceReplacements();
+  renderVoiceVocab();
+}
+
+// ---- History view ----------------------------------------------------------
+
+async function loadVoiceStats() {
+  try {
+    const s = await apiFetch('/api/voice/stats');
+    voiceStatsEl.innerHTML = '';
+    voiceStatCards(s).forEach((c) => {
+      const cell = document.createElement('div');
+      cell.className = 'voice-stat';
+      const num = document.createElement('div');
+      num.className = 'voice-stat-num';
+      num.textContent = c.value;
+      const lab = document.createElement('div');
+      lab.className = 'voice-stat-label';
+      lab.textContent = c.label;
+      cell.appendChild(num);
+      cell.appendChild(lab);
+      voiceStatsEl.appendChild(cell);
+    });
+    voiceStatsEl.hidden = false;
+  } catch (_) {
+    voiceStatsEl.hidden = true;
+  }
+}
+
+async function loadVoiceHistory() {
+  const q = voiceSearchInput.value.trim();
+  const url = '/api/voice/history?limit=200' + (q ? '&q=' + encodeURIComponent(q) : '');
+  try {
+    const data = await apiFetch(url);
+    voiceHistoryEntries = Array.isArray(data && data.entries) ? data.entries : [];
+  } catch (_) {
+    voiceHistoryEntries = [];
+  }
+  renderVoiceHistory();
+}
+
+function voiceCopyBlock(labelText, value) {
+  const wrap = document.createElement('div');
+  const head = document.createElement('div');
+  head.className = 'voice-row';
+  const lab = document.createElement('div');
+  lab.className = 'voice-label';
+  lab.style.flex = '1 1 auto';
+  lab.textContent = labelText;
+  const copy = document.createElement('button');
+  copy.type = 'button';
+  copy.className = 'dictate-copy';
+  copy.dataset.action = 'copy';
+  copy.dataset.text = value;
+  copy.textContent = 'copy';
+  head.appendChild(lab);
+  head.appendChild(copy);
+  const block = document.createElement('div');
+  block.className = 'voice-text-block';
+  block.textContent = value;
+  wrap.appendChild(head);
+  wrap.appendChild(block);
+  return wrap;
+}
+
+function buildVoiceHistoryBody(entry) {
+  const body = document.createElement('div');
+  body.className = 'voice-item-body';
+  const text = typeof entry.text === 'string' ? entry.text : '';
+  const raw = typeof entry.raw === 'string' ? entry.raw : '';
+
+  body.appendChild(voiceCopyBlock('Processed', text || '(empty)'));
+  if (raw && raw !== text) body.appendChild(voiceCopyBlock('Raw transcript', raw));
+
+  const modes = voiceSettings ? voiceSettings.modes : [];
+  if (modes.length) {
+    const lab = document.createElement('div');
+    lab.className = 'voice-label';
+    lab.textContent = 'Re-run with';
+    body.appendChild(lab);
+    const row = document.createElement('div');
+    row.className = 'chip-row';
+    modes.forEach((m) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'chip chip-mode';
+      b.dataset.action = 'reprocess';
+      b.dataset.id = String(entry.id);
+      b.dataset.mode = m.id;
+      b.textContent = m.name || m.id;
+      row.appendChild(b);
+    });
+    body.appendChild(row);
+  }
+
+  const del = document.createElement('button');
+  del.type = 'button';
+  del.className = 'voice-btn danger';
+  del.dataset.action = 'entry-delete';
+  del.dataset.id = String(entry.id);
+  const armed = voiceArmed.has('entry:' + entry.id);
+  del.textContent = armed ? 'Sure?' : 'Delete';
+  if (armed) del.classList.add('armed');
+  body.appendChild(del);
+
+  return body;
+}
+
+function renderVoiceHistory() {
+  const entries = voiceFilterHistory(voiceHistoryEntries, voiceSearchInput.value);
+  voiceHistoryListEl.innerHTML = '';
+  voiceHistoryClearBtn.hidden = voiceHistoryEntries.length === 0;
+  if (!entries.length) {
+    const empty = document.createElement('div');
+    empty.className = 'files-muted-line';
+    empty.textContent = voiceSearchInput.value.trim()
+      ? 'No dictations match that search'
+      : 'No dictations yet';
+    voiceHistoryListEl.appendChild(empty);
+    return;
+  }
+  const now = Date.now();
+  entries.forEach((entry) => {
+    const row = voiceHistoryRow(entry, now);
+    const card = document.createElement('div');
+    card.className = 'voice-item';
+
+    const head = document.createElement('div');
+    head.className = 'voice-item-head';
+    head.dataset.action = 'entry-expand';
+    head.dataset.id = row.id;
+
+    const main = document.createElement('div');
+    main.className = 'voice-item-main';
+    const meta = document.createElement('div');
+    meta.className = 'voice-item-meta';
+    meta.textContent = `${row.when} · ${row.mode} · ${row.duration}`;
+    const preview = document.createElement('div');
+    preview.className = 'voice-item-preview';
+    preview.textContent = row.preview;
+    main.appendChild(meta);
+    main.appendChild(preview);
+    head.appendChild(main);
+    card.appendChild(head);
+
+    if (voiceHistoryExpandedId === row.id) card.appendChild(buildVoiceHistoryBody(entry));
+    voiceHistoryListEl.appendChild(card);
+  });
+}
+
+voiceHistoryListEl.addEventListener('click', async (e) => {
+  try {
+    const t = e.target.closest('[data-action]');
+    if (!t) return;
+    const action = t.dataset.action;
+    const id = t.dataset.id;
+    if (action === 'entry-expand') {
+      voiceHistoryExpandedId = voiceHistoryExpandedId === id ? null : id;
+      voiceArmed.delete('entry:' + id);
+      renderVoiceHistory();
+    } else if (action === 'copy') {
+      navigator.clipboard.writeText(t.dataset.text || '')
+        .then(() => toast('copied'))
+        .catch(() => toast('copy failed'));
+    } else if (action === 'reprocess') {
+      const res = await apiFetch(`/api/voice/history/${encodeURIComponent(id)}/reprocess`, {
+        method: 'POST',
+        body: JSON.stringify({ mode: t.dataset.mode, deliver: false }),
+      });
+      const entry = voiceHistoryEntries.find((x) => String(x.id) === id);
+      if (entry && res) {
+        entry.text = typeof res.text === 'string' ? res.text : entry.text;
+        entry.mode = t.dataset.mode;
+      }
+      renderVoiceHistory();
+      toast(res && res.warning ? res.warning : 're-ran');
+    } else if (action === 'entry-delete') {
+      const key = 'entry:' + id;
+      if (!voiceArmed.has(key)) {
+        voiceArmed.add(key);
+        t.classList.add('armed');
+        t.textContent = 'Sure?';
+        return;
+      }
+      voiceArmed.delete(key);
+      await apiFetch(`/api/voice/history/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      voiceHistoryEntries = voiceHistoryEntries.filter((x) => String(x.id) !== id);
+      voiceHistoryExpandedId = null;
+      renderVoiceHistory();
+      loadVoiceStats();
+    }
+  } catch (err) { toast(String(err)); }
+});
+
+voiceSearchInput.addEventListener('input', () => {
+  renderVoiceHistory(); // instant client-side narrowing
+  if (voiceSearchTimer) clearTimeout(voiceSearchTimer);
+  voiceSearchTimer = setTimeout(() => { voiceSearchTimer = null; loadVoiceHistory(); }, 300);
+});
+
+voiceHistoryClearBtn.addEventListener('click', async () => {
+  const ok = await showConfirm('Delete every saved dictation?');
+  if (!ok) return;
+  try {
+    await apiFetch('/api/voice/history', { method: 'DELETE' });
+    voiceHistoryEntries = [];
+    voiceHistoryExpandedId = null;
+    renderVoiceHistory();
+    loadVoiceStats();
+    toast('history cleared');
+  } catch (_) { /* toasted */ }
+});
+
+function enterVoiceHistoryMode() {
+  voiceArmed.clear();
+  voiceHistoryExpandedId = null;
+  loadVoiceSettings(false); // modes power the "re-run with" chips
+  loadVoiceStats();
+  loadVoiceHistory();
+}
+
 // ---- Mode switcher --------------------------------------------------------
 
 const modeBridgeBtn = document.getElementById('mode-bridge');
 const modePttBtn = document.getElementById('mode-ptt');
 const modeFilesBtn = document.getElementById('mode-files');
 const modeDictateBtn = document.getElementById('mode-dictate');
+const modeHistoryBtn = document.getElementById('mode-history');
+const modeSettingsBtn = document.getElementById('mode-settings');
 const viewBridge = document.getElementById('view-bridge');
 const viewPtt = document.getElementById('view-ptt');
 const viewFiles = document.getElementById('view-files');
@@ -3464,10 +4487,14 @@ async function setMode(mode) {
   viewPtt.hidden = mode !== 'ptt';
   viewFiles.hidden = mode !== 'files';
   viewDictate.hidden = mode !== 'dictate';
+  viewSettings.hidden = mode !== 'settings';
+  viewHistory.hidden = mode !== 'history';
   modeBridgeBtn.classList.toggle('active', mode === 'bridge');
   modePttBtn.classList.toggle('active', mode === 'ptt');
   modeFilesBtn.classList.toggle('active', mode === 'files');
   modeDictateBtn.classList.toggle('active', mode === 'dictate');
+  modeSettingsBtn.classList.toggle('active', mode === 'settings');
+  modeHistoryBtn.classList.toggle('active', mode === 'history');
 
   if (TALK_MODES.includes(mode)) {
     // Decides whether the server routes audio to the virtual cable or keeps
@@ -3492,8 +4519,14 @@ async function setMode(mode) {
     } else if (mode === 'dictate') {
       beginDictation();
     }
+    // Mode chips need the settings document; cached after the first fetch.
+    if (mode === 'dictate') loadVoiceSettings(false);
   } else if (mode === 'files') {
     enterFilesMode();
+  } else if (mode === 'settings') {
+    loadVoiceSettings(true);
+  } else if (mode === 'history') {
+    enterVoiceHistoryMode();
   }
 
   try { localStorage.setItem(MODE_KEY, mode); } catch (_) { /* private mode */ }
@@ -3503,6 +4536,8 @@ modeBridgeBtn.addEventListener('click', () => setMode('bridge'));
 modePttBtn.addEventListener('click', () => setMode('ptt'));
 modeFilesBtn.addEventListener('click', () => setMode('files'));
 modeDictateBtn.addEventListener('click', () => setMode('dictate'));
+modeHistoryBtn.addEventListener('click', () => setMode('history'));
+modeSettingsBtn.addEventListener('click', () => setMode('settings'));
 
 // Manual reload -- when the page is a home-screen web clip there's no Safari
 // chrome to pull-to-refresh, so this is the only way out of a wedged state.
@@ -3579,7 +4614,10 @@ window.addEventListener('online', () => { recoverPtt(); recoverBridge(); recover
 
 // Restore last-used mode on load -- unless the URL asks for one, which is how
 // the iPhone Action Button shortcut lands straight on dictation.
-const HASH_MODES = { '#dictate': 'dictate', '#ptt': 'ptt', '#files': 'files', '#bridge': 'bridge' };
+const HASH_MODES = {
+  '#dictate': 'dictate', '#ptt': 'ptt', '#files': 'files', '#bridge': 'bridge',
+  '#settings': 'settings', '#history': 'history',
+};
 try {
   const fromHash = HASH_MODES[location.hash];
   if (fromHash) {
@@ -3589,7 +4627,7 @@ try {
     if (fromHash === 'dictate') autoStartDictation();
   } else {
     const saved = localStorage.getItem(MODE_KEY);
-    if (saved === 'ptt' || saved === 'files' || saved === 'dictate') setMode(saved);
+    if (['ptt', 'files', 'dictate', 'settings', 'history'].includes(saved)) setMode(saved);
   }
 } catch (_) { /* ignore */ }
 
