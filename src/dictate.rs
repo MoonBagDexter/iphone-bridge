@@ -200,15 +200,29 @@ pub fn deliver(text: &str) -> Result<()> {
     Ok(())
 }
 
-/// Everything after the audio stops: convert, transcribe, deliver.
-pub fn finish_and_deliver(mono_16k: &[f32]) -> Result<String> {
+/// Everything after the audio stops: transcribe, run the active mode over the
+/// transcript, then deliver whatever that produced.
+///
+/// The `plan` is made by the caller *before* transcription because it decides the
+/// vocabulary prompt whisper needs as an input.
+pub fn finish_and_deliver(
+    mono_16k: &[f32],
+    cfg: &crate::voice::settings::VoiceSettings,
+    plan: &crate::voice::Plan,
+) -> Result<crate::voice::Processed> {
     if mono_16k.is_empty() {
-        return Ok(String::new());
+        return Ok(crate::voice::Processed {
+            raw: String::new(),
+            text: String::new(),
+            warning: None,
+        });
     }
+    let seconds = mono_16k.len() as f32 / TARGET_RATE as f32;
     let wav = encode_wav_16k_mono(mono_16k);
-    let text = transcribe_wav(&wav)?;
-    deliver(&text)?;
-    Ok(text)
+    let raw = transcribe_wav_with_prompt(&wav, plan.whisper_prompt.as_deref())?;
+    let processed = crate::voice::apply(&raw, cfg, plan, seconds);
+    deliver(&processed.text)?;
+    Ok(processed)
 }
 
 /// Ten minutes of 16kHz mono. Long enough that nobody hits it mid-thought,
@@ -321,6 +335,14 @@ static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Run whisper.cpp over a WAV and return the cleaned transcript.
 pub fn transcribe_wav(wav: &[u8]) -> Result<String> {
+    transcribe_wav_with_prompt(wav, None)
+}
+
+/// As `transcribe_wav`, but biases recognition toward `prompt` -- a comma-separated
+/// list of names, acronyms and jargon from the user's vocabulary. whisper.cpp takes
+/// this as its initial decoder context, which is the documented mechanism for making
+/// it favour spellings it would otherwise mangle.
+pub fn transcribe_wav_with_prompt(wav: &[u8], prompt: Option<&str>) -> Result<String> {
     let exe = whisper_exe();
     let model = whisper_model();
     if !exe.exists() {
@@ -338,13 +360,17 @@ pub fn transcribe_wav(wav: &[u8]) -> Result<String> {
     std::fs::write(&scratch, wav)
         .with_context(|| format!("writing {}", scratch.display()))?;
 
-    let result = Command::new(&exe)
-        .arg("-m")
+    let mut cmd = Command::new(&exe);
+    cmd.arg("-m")
         .arg(&model)
         .arg("-f")
         .arg(&scratch)
         .arg("--no-timestamps")
-        .arg("--no-prints")
+        .arg("--no-prints");
+    if let Some(p) = prompt.map(str::trim).filter(|p| !p.is_empty()) {
+        cmd.arg("--prompt").arg(p);
+    }
+    let result = cmd
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .with_context(|| format!("spawning {}", exe.display()));

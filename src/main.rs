@@ -9,6 +9,7 @@ mod net;
 mod state;
 mod tls;
 mod tray;
+mod voice;
 
 use anyhow::Result;
 use bytes::Bytes;

@@ -170,26 +170,47 @@ async fn handle_mic(socket: WebSocket, state: AppState) {
                         )
                         .await;
 
+                    // Snapshot the settings and pick the mode now, on the async side:
+                    // mode selection reads the foreground window, which should reflect
+                    // where the user was speaking rather than wherever focus lands
+                    // once whisper has finished.
+                    let voice_cfg = {
+                        let cfg = state.config.read().unwrap();
+                        cfg.voice.clone()
+                    };
+                    let plan = crate::voice::plan(&voice_cfg);
+                    let mode_name = plan.mode.name.clone();
+
                     // Whisper blocks for a second or two; keep the socket alive.
                     let tx = out_tx.clone();
                     tokio::spawn(async move {
-                        let outcome =
-                            tokio::task::spawn_blocking(move || dictate::finish_and_deliver(&samples))
-                                .await;
+                        let outcome = tokio::task::spawn_blocking(move || {
+                            dictate::finish_and_deliver(&samples, &voice_cfg, &plan)
+                        })
+                        .await;
                         let payload = match outcome {
-                            Ok(Ok(text)) => {
-                                eprintln!("[ws-mic] dictated: {text:?}");
+                            Ok(Ok(p)) => {
+                                crate::logging::log_both(&format!(
+                                    "[dictate] {mode_name}: {} chars in {seconds:.1}s of audio",
+                                    p.text.len()
+                                ));
                                 json!({
                                     "type":"dictation","state":"done",
-                                    "text": text, "overflowed": overflowed
+                                    "text": p.text, "raw": p.raw,
+                                    "mode": mode_name, "warning": p.warning,
+                                    "overflowed": overflowed
                                 })
                             }
                             Ok(Err(e)) => {
-                                eprintln!("[ws-mic] transcription failed: {e:#}");
+                                crate::logging::log_both(&format!(
+                                    "[dictate] transcription failed: {e:#}"
+                                ));
                                 json!({"type":"dictation","state":"error","error": e.to_string()})
                             }
                             Err(e) => {
-                                eprintln!("[ws-mic] transcription task panicked: {e}");
+                                crate::logging::log_both(&format!(
+                                    "[dictate] transcription task panicked: {e}"
+                                ));
                                 json!({"type":"dictation","state":"error","error":"transcription crashed"})
                             }
                         };

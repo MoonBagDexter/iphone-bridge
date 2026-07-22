@@ -1,6 +1,7 @@
 use anyhow::Result;
 use axum::{
-    routing::{get, post},
+    extract::State,
+    routing::{delete, get, post},
     Router,
 };
 use axum_server::tls_rustls::RustlsConfig;
@@ -16,6 +17,7 @@ use crate::files::api as files_api;
 use crate::files::config::Config;
 use crate::files::sessions::SessionStore;
 use crate::net::ws::{ws_audio, ws_mic};
+use crate::voice::api as voice_api;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -73,7 +75,10 @@ const DICTATE_BODY_LIMIT: usize = 64 * 1024 * 1024;
 ///
 /// The body is the audio file itself -- Shortcuts' "Get Contents of URL"
 /// posts files raw, and a multipart wrapper would only add a step to build.
-async fn dictate_upload(body: Bytes) -> impl axum::response::IntoResponse {
+async fn dictate_upload(
+    State(state): State<AppState>,
+    body: Bytes,
+) -> impl axum::response::IntoResponse {
     use axum::http::StatusCode;
     use axum::Json;
 
@@ -94,21 +99,39 @@ async fn dictate_upload(body: Bytes) -> impl axum::response::IntoResponse {
 
     let started = std::time::Instant::now();
     let bytes = body.to_vec();
+    let voice_cfg = {
+        let cfg = state.config.read().unwrap();
+        cfg.voice.clone()
+    };
+    let plan = crate::voice::plan(&voice_cfg);
+    let mode_name = plan.mode.name.clone();
+
     let outcome = tokio::task::spawn_blocking(move || {
-        let text = crate::dictate::transcribe_upload(&bytes)?;
-        crate::dictate::deliver(&text)?;
-        anyhow::Ok(text)
+        let wav = crate::dictate::convert_to_wav_16k(&bytes)?;
+        let raw = crate::dictate::transcribe_wav_with_prompt(&wav, plan.whisper_prompt.as_deref())?;
+        // The upload carries no duration; derive it from the decoded audio so the
+        // history entry and the "time saved" stat stay honest.
+        let seconds = wav.len() as f32 / (crate::dictate::TARGET_RATE as f32 * 2.0);
+        let processed = crate::voice::apply(&raw, &voice_cfg, &plan, seconds);
+        crate::dictate::deliver(&processed.text)?;
+        anyhow::Ok(processed)
     })
     .await;
     let elapsed = started.elapsed().as_secs_f32();
 
     match outcome {
-        Ok(Ok(text)) => {
+        Ok(Ok(p)) => {
             crate::logging::log_both(&format!(
-                "[dictate] transcribed in {elapsed:.1}s, {} chars: {text:?}",
-                text.chars().count()
+                "[dictate] {mode_name}: transcribed in {elapsed:.1}s, {} chars",
+                p.text.chars().count()
             ));
-            (StatusCode::OK, Json(serde_json::json!({ "text": text })))
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "text": p.text, "raw": p.raw,
+                    "mode": mode_name, "warning": p.warning
+                })),
+            )
         }
         Ok(Err(e)) => {
             crate::logging::log_both(&format!("[dictate] failed after {elapsed:.1}s: {e:#}"));
@@ -175,6 +198,21 @@ fn router(
         .route("/api/gitchanges", get(files_api::gitchanges))
         .route("/api/session-peek", get(files_api::session_peek))
         .route("/api/zip", get(files_api::zip))
+        .route(
+            "/api/voice/settings",
+            get(voice_api::get_settings).put(voice_api::put_settings),
+        )
+        .route("/api/voice/key", post(voice_api::set_key))
+        .route(
+            "/api/voice/history",
+            get(voice_api::get_history).delete(voice_api::clear_history),
+        )
+        .route("/api/voice/history/{id}", delete(voice_api::delete_entry))
+        .route(
+            "/api/voice/history/{id}/reprocess",
+            post(voice_api::reprocess),
+        )
+        .route("/api/voice/stats", get(voice_api::get_stats))
         .merge(upload_route)
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),

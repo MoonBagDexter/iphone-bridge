@@ -46,6 +46,10 @@ pub struct Config {
     /// load cleanly.
     #[serde(default)]
     pub spawned_dirs: Vec<String>,
+    /// Dictation settings: modes, replacements, vocabulary, AI provider, history cap.
+    /// Lives here so there is a single config file; see `crate::voice::settings`.
+    #[serde(default)]
+    pub voice: crate::voice::settings::VoiceSettings,
 }
 
 impl Config {
@@ -86,6 +90,7 @@ impl Config {
                 r"C:\Users\thedi\Documents".to_string(),
             ],
             spawned_dirs: Vec::new(),
+            voice: crate::voice::settings::VoiceSettings::default(),
         }
     }
 
@@ -144,7 +149,10 @@ pub fn load_or_init() -> Config {
     let path = config_path();
     match std::fs::read_to_string(&path) {
         Ok(s) => match serde_json::from_str::<Config>(&s) {
-            Ok(cfg) => {
+            Ok(mut cfg) => {
+                // A config written before the voice settings existed deserializes with
+                // an empty mode list; normalize restores the built-ins.
+                cfg.voice.normalize();
                 log_both(&format!(
                     "[files] loaded config: scope={:?}, {} root(s)",
                     cfg.scope,
@@ -248,6 +256,31 @@ mod tests {
         assert_eq!(cfg.scope, Scope::Roots);
         assert_eq!(cfg.roots, vec!["C:\\x".to_string()]);
         assert!(cfg.spawned_dirs.is_empty());
+    }
+
+    #[test]
+    fn config_predating_voice_settings_normalizes_to_builtin_modes() {
+        let legacy = r#"{ "pin": "123456", "scope": "roots", "roots": ["C:\\x"] }"#;
+        let cfg: Config = serde_json::from_str(legacy).expect("legacy config must load");
+        // A wholly absent `voice` key falls back to VoiceSettings::default(), which
+        // already carries the built-in modes -- no normalize needed for this case.
+        assert!(
+            cfg.voice.mode("raw").is_some(),
+            "a config with no voice key must still get the built-in modes"
+        );
+        assert_eq!(cfg.voice.history_cap, 500);
+
+        // A *present but partial* voice key is the case normalize exists for: serde
+        // fills each missing field with its own default, leaving modes empty.
+        let partial = r#"{ "pin": "1", "voice": { "active_mode": "gone" } }"#;
+        let mut cfg2: Config = serde_json::from_str(partial).expect("partial voice must load");
+        assert!(cfg2.voice.modes.is_empty(), "field-level default is an empty Vec");
+        cfg2.voice.normalize();
+        assert!(
+            cfg2.voice.mode("raw").is_some(),
+            "normalize must restore the built-in modes"
+        );
+        assert_eq!(cfg2.voice.active_mode, "", "dangling mode id must be cleared");
     }
 
     #[test]
