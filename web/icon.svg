@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" width="180" height="180">
+  <defs>
+    <!-- Machined plate: light catches the top edge, falls off toward the base. -->
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#212A30"/>
+      <stop offset="0.55" stop-color="#151A1D"/>
+      <stop offset="1" stop-color="#0E1215"/>
+    </linearGradient>
+    <filter id="lamp" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="7"/>
+    </filter>
+  </defs>
+
+  <rect width="180" height="180" fill="url(#plate)"/>
+  <!-- The milled seam along the top edge, same hairline as every panel in the app. -->
+  <rect x="0" y="0" width="180" height="1.5" fill="#ffffff" opacity="0.06"/>
+
+  <!-- The span: the bridge itself, lit. One glow, as the system allows. -->
+  <g fill="none" stroke="#FFB03A" stroke-linecap="round">
+    <path d="M34 116 Q90 44 146 116" stroke-width="12" opacity="0.34" filter="url(#lamp)"/>
+    <path d="M34 116 Q90 44 146 116" stroke-width="12"/>
+  </g>
+
+  <!-- Piers: the two ends it joins — phone here, PC there. -->
+  <circle cx="34" cy="116" r="11" fill="#FFB03A"/>
+  <circle cx="146" cy="116" r="11" fill="#FFB03A"/>
+
+  <!-- Deck line, engraved rather than lit: the span has something to carry. -->
+  <rect x="30" y="137" width="120" height="7" rx="3.5" fill="#7D8B94" opacity="0.5"/>
+</svg>

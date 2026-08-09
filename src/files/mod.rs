@@ -5,6 +5,7 @@ pub mod api;
 pub mod config;
 pub mod delete;
 pub mod features;
+pub mod lnk;
 pub mod pathsafe;
 pub mod pshell;
 pub mod sessions;

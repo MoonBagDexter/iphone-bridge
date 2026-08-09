@@ -3,57 +3,92 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <!-- Home-screen install: its own window, no Safari chrome, dark from the
+       first frame. black-translucent lets the plate run under the status bar;
+       body's safe-area padding keeps content clear of it. -->
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Bridge">
+  <meta name="theme-color" content="#0B0E10">
+  <link rel="apple-touch-icon" href="/icon-180.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">
+  <link rel="manifest" href="/manifest.webmanifest">
   <title>iPhone Bridge</title>
   <style>
     /* ============================================================================
-       FABLE DESIGN SYSTEM — iPhone Bridge / Files cockpit
+       FIELD CONSOLE — iPhone Bridge
        ----------------------------------------------------------------------------
-       One coherent system, applied to every Files-tab surface. Bridge/PTT views
-       are loved as-is and only borrow the shared tokens where they already did.
+       This app is a comms bridge: push-to-talk to a PC, audio streaming both ways,
+       a terminal, and a file surface. So it is dressed as an instrument faceplate
+       rather than a web app — machined graphite panels, engraved hairlines,
+       stencilled mono labels, and indicator lamps.
 
-       SPACING (4px base) : --s1 .25rem  --s2 .4rem  --s3 .6rem  --s4 .9rem  --s5 1.2rem
-       RADII              : --r-sm .5rem (chips/badges)  --r-md .8rem (rows/inputs)
-                            --r-lg 1.1rem (cards/panels)  --r-pill 999px
-       TYPE               : section titles = 0.7rem / 700 / uppercase / +0.06em (--muted)
-                            body            = 0.92rem / 400–600
-                            meta / sub      = 0.72rem / --muted
-                            micro-badge     = 0.62rem / 700 / uppercase
-       ELEVATION          : one flat treatment — 1px --line border on --surface.
-                            Interactive surfaces lift on :active (accent border).
-       COLOR              : accent (green) used sparingly for "live / primary / here".
-                            danger (red) = kill / trash / delete.
-                            warn (amber) = dirty / modified.
-                            everything else is --muted. No third decorative hue.
-       ICONS              : inline SVG <symbol>s referenced via <use>. Single stroke
-                            width, currentColor, one .ic sizing class. Meaning-only.
-       MOTION             : --t-fast 150ms — sub-view + overlay enter/exit, no bounce.
+       COLOR   Panels are cool graphite, not black — #0B0E10 void, #151A1D plate.
+               AMBER (--accent #FFB03A) is the lamp: active tab, primary action,
+               "you are here". Warm at 2am in a way acid green never is.
+               GREEN (--live) means on hardware what it means here and nowhere
+               else: a live connection / a running session. Never decoration.
+               RED = kill/delete. VIOLET = Claude. AMBER-DIM (--warn) = modified.
+               No other hue earns a place.
+
+       TYPE    No webfonts — this is served over LAN and must render offline, so
+               personality comes from treatment, not typeface purchase.
+               --mono, uppercase, +0.14em tracking = every label on the faceplate
+               (tabs, section heads, badges, paths, meta). Instruments stencil
+               their labels; so does this.
+               System sans carries only prose and file names.
+
+       SCALE   stencil .625rem/700/upper/+.14em   meta .72rem mono
+               body .92rem sans                   title 1.02rem/650 sans
+
+       SURFACE One flat treatment: 1px --line on --panel. Depth comes from a
+               hairline highlight along a plate's top edge, never drop shadows.
+               Exactly one thing in the app glows: the lit tab lamp.
+
+       MOTION  --t-fast 150ms, no bounce. Reduced-motion honoured.
        ============================================================================ */
     :root {
       color-scheme: dark;
-      --bg: #0a0a0a;
-      --fg: #f4f4f5;
-      --muted: #8a8a8e;
-      --accent: #4ade80;
-      --accent-dim: #166534;
-      --idle: #27272a;
-      --idle-bg: #18181b;
 
-      /* Semantic + systematized aliases (additive; nothing existing renamed). */
-      --surface: #18181b;      /* = --idle-bg: default card/row fill */
-      --surface-2: #202024;    /* one step up: nested / pressed contexts */
-      --line: #27272a;         /* = --idle: hairline borders */
-      --danger: #f87171;
-      --danger-line: #7f1d1d;
-      --danger-bg: rgba(127,29,29,0.18);
-      --warn: #fbbf24;
-      --warn-line: #78350f;
-      --spawn: #c084fc;        /* Claude-purple, only on spawn affordances */
-      --spawn-line: #581c87;
+      /* --- plate --- */
+      --bg: #0B0E10;           /* void behind the faceplate */
+      --panel: #151A1D;        /* the plate itself */
+      --panel-raised: #1D2429; /* nested / pressed */
+
+      --fg: #E6EDF1;           /* engraved label white */
+      --muted: #7D8B94;        /* secondary engraving */
+
+      /* --- lamps --- */
+      --accent: #FFB03A;       /* amber: active / primary / here */
+      --accent-dim: #4A3106;   /* amber lamp housing */
+      --live: #4ADE80;         /* green: connected / running. nothing else. */
+      --live-dim: #10331F;
+      --danger: #FF6B6B;
+      --danger-line: #6E2222;
+      --danger-bg: rgba(110,34,34,0.20);
+      --warn: #FBBF24;
+      --warn-line: #78350F;
+      --spawn: #C084FC;        /* Claude */
+      --spawn-line: #4C1D95;
+      --spawn-bg: rgba(76,29,149,0.18);
+      --spawn-bg-strong: rgba(76,29,149,0.38);
+
+      /* Legacy aliases kept so every existing rule re-skins for free. */
+      --idle: #2A3238;
+      --idle-bg: #151A1D;
+      --surface: #151A1D;
+      --surface-2: #1D2429;
+      --line: #2A3238;
+
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+      /* Tab content height. The faceplate is this PLUS the home-indicator
+         inset; body reserves exactly the same amount. */
+      --tabbar-h: 3.05rem;
 
       --s1: 0.25rem; --s2: 0.4rem; --s3: 0.6rem; --s4: 0.9rem; --s5: 1.2rem;
-      --r-sm: 0.5rem; --r-md: 0.8rem; --r-lg: 1.1rem; --r-pill: 999px;
+      --r-sm: 0.4rem; --r-md: 0.65rem; --r-lg: 0.9rem; --r-pill: 999px;
       --t-fast: 150ms;
     }
     @media (prefers-reduced-motion: reduce) {
@@ -88,12 +123,16 @@
       display: flex;
       flex-direction: column;
       align-items: stretch;
-      height: 100vh;            /* fallback for older browsers */
-      height: 100dvh;           /* respects iOS Safari URL bar */
+      /* Height comes from `inset: 0` on the html,body rule -- i.e. exactly the
+         viewport. An explicit 100dvh here fought that and left the faceplate
+         floating short of the screen bottom on a home-screen install.
+         The faceplate is position:fixed, so body only has to RESERVE its space. */
       padding-top: calc(env(safe-area-inset-top, 0px) + 0.6rem);
-      padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.25rem);
-      padding-left: 0.6rem;
-      padding-right: 0.6rem;
+      padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px));
+      /* max() keeps content clear of the rounded corners and, in landscape, the
+         notch side -- the display curve must never clip a control. */
+      padding-left: max(env(safe-area-inset-left, 0px), 0.6rem);
+      padding-right: max(env(safe-area-inset-right, 0px), 0.6rem);
     }
     .view { display: flex; flex-direction: column; gap: 0.4rem; flex: 1; min-height: 0; }
     .view[hidden] { display: none; }
@@ -104,7 +143,7 @@
       top: calc(env(safe-area-inset-top, 0px) + 0.4rem);
       left: 50%;
       transform: translate(-50%, -0.5rem);
-      background: rgba(20, 20, 22, 0.92);
+      background: var(--panel);
       color: var(--fg);
       padding: 0.45rem 0.95rem;
       border-radius: 999px;
@@ -125,13 +164,18 @@
     /* Bridge mode (existing). */
     .toggle {
       flex: 1;
-      border: 1px solid var(--idle);
-      background: var(--idle-bg);
-      border-radius: 1.5rem;
-      padding: 2rem 1.5rem;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: var(--r-lg);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.045);
+      padding: var(--s5) var(--s4);
       display: flex;
       flex-direction: column;
-      justify-content: space-between;
+      /* Legend and state read as one stacked unit in the middle of the plate.
+         Pinned to opposite corners they left a dead void between them. */
+      justify-content: center;
+      align-items: flex-start;
+      gap: var(--s1);
       cursor: pointer;
       transition: background 120ms ease, border-color 120ms ease;
       color: inherit;
@@ -141,10 +185,20 @@
       appearance: none;
     }
     .toggle:active { transform: scale(0.995); }
-    .toggle .label { font-size: 1.5rem; font-weight: 600; }
-    .toggle .state { font-size: 0.9rem; color: var(--muted); }
-    .toggle.on { border-color: var(--accent); background: var(--accent-dim); }
-    .toggle.on .state { color: var(--accent); }
+    .toggle .label {
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .toggle.on .label { color: var(--live); }
+    .toggle .state { font-size: 1.35rem; font-weight: 600; color: var(--fg); }
+    /* A stream that is actually running is a live connection, so it lights
+       green — the one meaning green keeps in this system. */
+    .toggle.on { border-color: var(--live); background: var(--live-dim); }
+    .toggle.on .state { color: var(--live); }
 
     /* PTT view: top-down = arrows / editing / switching / Enter / PTT. */
     .ptt-state { font-size: 0.8rem; color: var(--muted); text-align: center; min-height: 1em; }
@@ -225,13 +279,20 @@
     .nav-btn-macro { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 
     /* Color-coded buttons for quick visual scanning. */
-    .nav-btn-claude { color: #c084fc; border-color: #581c87; }
-    .nav-btn-bksp { color: #f87171; border-color: #7f1d1d; }
-    .nav-btn-btw { color: #fbbf24; border-color: #78350f; }
-    .nav-btn-push { color: #60a5fa; border-color: #1e3a8a; }
-    .nav-btn-switch { color: #2dd4bf; border-color: #134e4a; }
-    .nav-btn-resume { color: #f472b6; border-color: #831843; }
-    .nav-btn-newline { color: #a3e635; border-color: #365314; }
+    /* Key colour is grouped by what a key DOES, not per-button. Eight unrelated
+       hues made this grid read as noise; three meaningful families let you hit a
+       key one-handed without reading it:
+         VIOLET  anything that talks to Claude (mode toggle + its macros)
+         RED     destructive / interrupt
+         AMBER   text entry — same family as Enter and the active tab lamp
+         NEUTRAL window + desktop switching, which is the PC's business, not yours */
+    .nav-btn-claude { color: var(--spawn); border-color: var(--spawn-line); background: var(--spawn-bg); }
+    .nav-btn-btw,
+    .nav-btn-resume,
+    .nav-btn-push { color: var(--spawn); border-color: var(--spawn-line); }
+    .nav-btn-bksp { color: var(--danger); border-color: var(--danger-line); }
+    .nav-btn-newline { color: var(--accent); border-color: var(--accent-dim); }
+    .nav-btn-switch { color: var(--muted); border-color: var(--line); }
 
     /* Compact buttons that just hold a glyph or graphic, no padded text. */
     .nav-btn-mini { padding: 0.35rem 0; font-size: 0.85rem; }
@@ -298,9 +359,9 @@
     .enter-btn {
       flex: 0 0 auto;
       height: 2.8rem;
-      border-radius: 1rem;
-      border: 1px solid #14532d;
-      background: rgba(22, 101, 52, 0.18);
+      border-radius: var(--r-md);
+      border: 1px solid var(--accent-dim);
+      background: rgba(74, 49, 6, 0.35);
       color: var(--accent);
       font: inherit;
       font-size: 1.25rem;
@@ -343,18 +404,20 @@
     .ptt-mic line, .ptt-mic path { fill: none; }
     .ptt-mic rect { stroke: none; }
     .ptt-btn:active { transform: scale(0.995); }
-    .ptt-btn.on { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
-    .ptt-btn.draining { border-color: #f59e0b; background: #78350f; color: #fbbf24; }
+    /* Transmitting = live on air. Green, same as the audio toggles. */
+    .ptt-btn.on { border-color: var(--live); background: var(--live-dim); color: var(--live); }
+    .ptt-btn.draining { border-color: var(--warn); background: var(--warn-line); color: var(--warn); }
 
     /* ---- Dictate mode ---------------------------------------------------- */
     .dictate-scroll {
-      flex: 1;
+      flex: 0 1 auto;
       min-height: 0;
       overflow-y: auto;
       -webkit-overflow-scrolling: touch;
       display: flex;
       flex-direction: column;
       gap: .5rem;
+      padding-bottom: var(--s4);
     }
     .dictate-result {
       border: 1px solid var(--line);
@@ -366,8 +429,10 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      font-size: .72rem;
-      letter-spacing: .04em;
+      font-family: var(--mono);
+      font-size: 0.625rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
       text-transform: uppercase;
       color: var(--muted);
       margin-bottom: .35rem;
@@ -382,10 +447,15 @@
       border: 1px solid var(--line);
       background: transparent;
       color: var(--muted);
-      border-radius: .4rem;
-      padding: .2rem .5rem;
-      font-size: .72rem;
-      font-family: inherit;
+      border-radius: var(--r-sm);
+      min-height: 44px;
+      padding: 0 0.8rem;
+      font-family: var(--mono);
+      font-size: 0.625rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      cursor: pointer;
     }
     .dictate-copy:active { background: var(--idle); }
     .dictate-guide {
@@ -396,11 +466,15 @@
       font-size: .84rem;
       color: var(--muted);
     }
+    /* Collapsed setup notes: stencilled and dim so they sit under the controls
+       instead of shouting over them in full-width uppercase sans. */
     .dictate-guide summary {
       cursor: pointer;
-      color: var(--fg);
-      font-size: .8rem;
-      letter-spacing: .04em;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 0.625rem;
+      font-weight: 700;
+      letter-spacing: .14em;
       text-transform: uppercase;
     }
     .dictate-guide ol { margin: .4rem 0 .5rem 1.1rem; padding: 0; }
@@ -423,16 +497,22 @@
        a dictated line can be sent without leaving the tab. */
     .dictate-btn-row {
       display: flex;
-      gap: .4rem;
-      flex: 0 0 auto;
+      /* Takes every pixel the notes above don't need. */
+      flex: 1 1 auto;
+      min-height: 5rem;
+      position: relative;
     }
     .dictate-btn { min-height: 5rem; }
     .dictate-enter {
-      flex: 0 0 4.2rem;
-      border-radius: .75rem;
-      border: 1px solid var(--idle);
-      background: var(--idle-bg);
-      color: var(--fg);
+      position: absolute;
+      right: 0.6rem;
+      bottom: 0.6rem;
+      width: 4rem;
+      height: 4rem;
+      border-radius: var(--r-md);
+      border: 1px solid var(--accent-dim);
+      background: rgba(74,49,6,0.35);
+      color: var(--accent);
       font-size: 1.5rem;
       font-family: inherit;
       -webkit-appearance: none;
@@ -452,9 +532,11 @@
     /* Which mode produced the transcript, whispered next to the card title. */
     .voice-tag {
       margin-left: 0.4rem;
-      font-size: 0.62rem;
+      font-family: var(--mono);
+      font-size: 0.58rem;
       font-weight: 700;
-      letter-spacing: 0.04em;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
       color: var(--accent);
     }
     /* Non-blocking: the transcript underneath is still good and still copyable. */
@@ -528,8 +610,8 @@
     .voice-btn:active { border-color: var(--accent); color: var(--accent); background: var(--surface-2); }
     .voice-btn.primary { border-color: var(--accent-dim); color: var(--accent); }
     .voice-btn.danger { border-color: var(--danger-line); color: var(--danger); background: var(--danger-bg); }
-    .voice-btn.danger:active { border-color: var(--danger); color: #fff; background: rgba(127,29,29,0.32); }
-    .voice-btn.armed { border-color: var(--danger); color: #fff; background: var(--danger); }
+    .voice-btn.danger:active { border-color: var(--danger); color: var(--bg); background: var(--danger); }
+    .voice-btn.armed { border-color: var(--danger); color: var(--danger); background: var(--danger-bg); }
     .voice-btn.wide { width: 100%; }
     .voice-save { margin-top: var(--s2); margin-bottom: var(--s4); }
 
@@ -622,14 +704,15 @@
     .voice-item.active-mode { border-color: var(--accent); }
     .voice-badge {
       flex: 0 0 auto;
-      font-size: 0.62rem;
+      font-family: var(--mono);
+      font-size: 0.58rem;
       font-weight: 700;
-      letter-spacing: 0.04em;
+      letter-spacing: 0.14em;
       text-transform: uppercase;
       color: var(--accent);
       border: 1px solid var(--accent-dim);
-      border-radius: var(--r-pill);
-      padding: 0.1rem 0.4rem;
+      border-radius: var(--r-sm);
+      padding: 0.14rem 0.4rem;
     }
     .voice-text-block {
       font-size: 0.86rem;
@@ -666,9 +749,10 @@
     }
     .voice-stat-num { font-size: 1.15rem; font-weight: 700; }
     .voice-stat-label {
-      font-size: 0.62rem;
+      font-family: var(--mono);
+      font-size: 0.58rem;
       font-weight: 700;
-      letter-spacing: 0.04em;
+      letter-spacing: 0.14em;
       text-transform: uppercase;
       color: var(--muted);
       text-align: center;
@@ -693,88 +777,118 @@
     }
     .space-btn:active { background: var(--idle); border-color: var(--accent); color: var(--accent); }
 
-    /* Mode switcher. */
+    /* ---- THE FACEPLATE ---------------------------------------------------
+       The signature surface. Five fixed slots — never scrolls, never overflows,
+       which was the whole complaint. Each slot is an engraved legend under a
+       glyph; the active one is a lit lamp: an amber bar seated in the top edge
+       like a real indicator LED, amber glyph, amber legend, and the single
+       permitted bloom in the entire app.
+       Actions that used to squat here (/clear, reload) moved to where they are
+       actually used: /clear lives with the keyboard, reload lives in More. */
     .bottom-bar {
-      position: relative;
       display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-top: 0.35rem;
-      /* Keep clear of the absolutely-positioned refresh button on the right;
-         padded both sides so the pills stay optically centred. */
-      padding: 0 2.4rem;
-    }
-    .mode-switch {
-      display: flex;
-      gap: 0.2rem;
-      background: var(--idle-bg);
-      border: 1px solid var(--idle);
-      border-radius: 999px;
-      padding: 0.2rem;
-      max-width: 100%;
-      overflow-x: auto;
-      scrollbar-width: none;
-    }
-    .mode-switch::-webkit-scrollbar { display: none; }
-    .refresh-btn {
-      position: absolute;
-      right: 0;
-      width: 2.1rem;
-      height: 2.1rem;
-      border-radius: 999px;
-      border: 1px solid var(--idle);
-      background: var(--idle-bg);
-      color: var(--muted);
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1.05rem;
-      -webkit-appearance: none;
-      appearance: none;
-    }
-    .refresh-btn:active { background: var(--idle); color: var(--accent); border-color: var(--accent); }
-
-    .clear-btn {
-      position: absolute;
+      align-items: stretch;
+      gap: 0;
+      /* Pinned to the true viewport bottom rather than riding at the end of a
+         flex column, so no page-height rounding can leave a strip of void under
+         it. The home-indicator inset is padding INSIDE the plate, so the metal
+         continues all the way to the glass. */
+      position: fixed;
       left: 0;
-      height: 2.1rem;
-      padding: 0 0.7rem;
-      border-radius: 999px;
-      border: 1px solid #7f1d1d;
-      background: var(--idle-bg);
-      color: #f87171;
-      cursor: pointer;
-      font: inherit;
-      font-size: 0.78rem;
-      font-weight: 600;
-      letter-spacing: 0.01em;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      -webkit-appearance: none;
-      appearance: none;
-      display: flex;
-      align-items: center;
+      right: 0;
+      bottom: 0;
+      z-index: 40;
+      height: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px));
+      padding-top: 0;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+      /* Keep the outer two tabs off the curved corners. */
+      padding-left: max(env(safe-area-inset-left, 0px), 0.5rem);
+      padding-right: max(env(safe-area-inset-right, 0px), 0.5rem);
+      background: var(--panel);
+      border: 0;
+      border-top: 1px solid var(--line);
+      border-radius: 0;
+      /* The seam: a hairline of lighter metal along the top edge, as if the
+         plate were milled and caught the light. Replaces any drop shadow. */
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.045);
     }
-    .clear-btn:active { background: #7f1d1d; color: #fff; }
-    .mode-pill {
-      flex: 0 0 auto;
-      white-space: nowrap;
-      /* Tightened when Dictate made it four pills -- 0.9rem overflowed on a
-         phone and pushed the group under the refresh button. */
-      padding: 0.25rem 0.7rem;
-      border-radius: 999px;
-      border: none;
+    .console-tab {
+      position: relative;
+      flex: 1 1 0;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.16rem;
+      padding: 0 0.1rem;
+      border: 0;
       background: transparent;
       color: var(--muted);
-      font: inherit;
-      font-size: 0.8rem;
-      font-weight: 600;
       cursor: pointer;
-      letter-spacing: 0.02em;
       -webkit-appearance: none;
       appearance: none;
+      transition: color var(--t-fast) ease;
     }
-    .mode-pill.active { background: var(--idle); color: var(--fg); }
+    .console-tab .ic {
+      width: 21px;
+      height: 21px;
+      stroke-width: 1.6;
+      transition: filter var(--t-fast) ease;
+    }
+    /* Stencilled legend, the way a panel labels its controls. */
+    .console-tab-label {
+      font-family: var(--mono);
+      font-size: 0.5625rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    /* The lamp: seated in the top edge, only as wide as the glyph. */
+    .console-tab::before {
+      content: "";
+      position: absolute;
+      top: -1px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 26px;
+      height: 2px;
+      border-radius: 0 0 2px 2px;
+      background: transparent;
+      transition: background var(--t-fast) ease, box-shadow var(--t-fast) ease;
+    }
+    .console-tab.active { color: var(--accent); }
+    .console-tab.active::before {
+      background: var(--accent);
+      box-shadow: 0 0 8px 0 rgba(255,176,58,0.55);
+    }
+    .console-tab.active .ic { filter: drop-shadow(0 0 5px rgba(255,176,58,0.35)); }
+    .console-tab:active { color: var(--fg); }
+
+    /* /clear, now docked with the keyboard it belongs to. */
+    .clear-btn {
+      flex: 0 0 auto;
+      min-height: 44px;
+      padding: 0 0.8rem;
+      border-radius: var(--r-md);
+      border: 1px solid var(--danger-line);
+      background: var(--danger-bg);
+      color: var(--danger);
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      -webkit-appearance: none;
+      appearance: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .clear-btn:active { background: var(--danger); color: var(--bg); border-color: var(--danger); }
 
     footer { padding-top: 0.2rem; font-size: 0.65rem; color: var(--muted); text-align: center; min-height: 0.9rem; }
 
@@ -790,12 +904,16 @@
       display: flex;
       flex-direction: column;
       gap: 0.6rem;
+      /* Clear the faceplate, so the last row can always be scrolled into view. */
+      padding-bottom: var(--s4);
     }
 
+    /* Stencilled section legend — the panel labelling its own sections. */
     .files-section-title {
-      font-size: 0.7rem;
+      font-family: var(--mono);
+      font-size: 0.625rem;
       font-weight: 700;
-      letter-spacing: 0.06em;
+      letter-spacing: 0.14em;
       text-transform: uppercase;
       color: var(--muted);
       padding: 0 0.1rem;
@@ -818,7 +936,8 @@
       font: inherit;
       font-size: 0.72rem;
       font-weight: 600;
-      padding: 0.2rem 0.1rem;
+      min-height: 44px;
+      padding: 0.2rem 0.35rem;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
@@ -861,16 +980,17 @@
       border-radius: 50%;
       background: var(--muted);
     }
-    .session-dot.live { background: var(--accent); box-shadow: 0 0 0 3px rgba(74,222,128,0.14); }
+    .session-dot.live { background: var(--live); box-shadow: 0 0 0 3px rgba(74,222,128,0.14); }
     .session-info { flex: 1; min-width: 0; }
     .session-name { font-size: 0.9rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .session-meta { font-size: 0.72rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     /* Only "hidden" gets a whisper-quiet tag now; visible is implied by the dot. */
     .session-tag {
       flex: 0 0 auto;
-      font-size: 0.6rem;
+      font-family: var(--mono);
+      font-size: 0.58rem;
       font-weight: 700;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.14em;
       text-transform: uppercase;
       color: var(--muted);
     }
@@ -879,8 +999,8 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      min-width: 40px;
-      min-height: 32px;
+      min-width: 44px;
+      min-height: 44px;
       border: 1px solid transparent;
       background: transparent;
       color: var(--muted);
@@ -901,11 +1021,17 @@
        quick-access shortcuts, then Trash last. Merged into one visual row. */
     .chip-row {
       display: flex;
+      flex: 0 0 auto;
       gap: var(--s2);
       overflow-x: auto;
       -webkit-overflow-scrolling: touch;
       touch-action: pan-x;
-      padding: 0.1rem 0.1rem 0.15rem;
+      padding: 0.1rem 2.2rem 0.15rem 0.1rem;
+      scrollbar-width: none;
+      /* Feather the trailing edge so a chip cut by the viewport reads as "more
+         over here", not as a broken row. */
+      -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 2.2rem), transparent 100%);
+      mask-image: linear-gradient(to right, #000 calc(100% - 2.2rem), transparent 100%);
     }
     .chip-row::-webkit-scrollbar { display: none; }
     .chip {
@@ -914,7 +1040,8 @@
       align-items: center;
       gap: 0.3rem;
       max-width: 11rem;
-      padding: 0.4rem 0.7rem;
+      min-height: 44px;
+      padding: 0.4rem 0.8rem;
       border-radius: var(--r-pill);
       border: 1px solid var(--line);
       background: var(--surface);
@@ -932,14 +1059,14 @@
     .chip .ic { width: 0.9rem; height: 0.9rem; }
     .chip:active { background: var(--surface-2); border-color: var(--accent); color: var(--accent); }
     /* Favorites lead the shelf; the star carries the meaning, text stays --fg. */
-    .chip.chip-fav .ic { color: var(--warn); fill: var(--warn); stroke: var(--warn); }
+    .chip.chip-fav .ic { color: var(--fg); fill: var(--fg); stroke: var(--fg); }
     /* Quick access: plain chips with a folder glyph. */
     .chip.chip-shortcut { color: var(--fg); }
     .chip.chip-shortcut .ic { color: var(--muted); }
     .chip.chip-shortcut:active .ic { color: var(--accent); }
     /* Trash pseudo-chip: distinct muted/red tint, always the trailing chip. */
-    .chip.chip-trash { border-color: var(--danger-line); color: var(--danger); background: var(--danger-bg); }
-    .chip.chip-trash:active { background: rgba(127,29,29,0.28); border-color: var(--danger); color: #fff; }
+    .chip.chip-trash { color: var(--muted); }
+    .chip.chip-trash:active { background: var(--surface-2); border-color: var(--accent); color: var(--accent); }
 
     /* Breadcrumb bar */
     .breadcrumb-row {
@@ -976,17 +1103,19 @@
       -webkit-appearance: none;
       appearance: none;
     }
-    .current-fav-btn.fav-on { color: var(--warn); border-color: var(--warn-line); }
-    .current-fav-btn.fav-on .ic { fill: var(--warn); }
+    .current-fav-btn.fav-on { color: var(--fg); border-color: var(--line); }
+    .current-fav-btn.fav-on .ic { fill: var(--fg); }
     .current-fav-btn:active { transform: scale(0.92); }
+    /* A breadcrumb is a filesystem path — machine text, so it is set in mono. */
     .crumb-btn {
       flex: 0 0 auto;
       border: none;
       background: transparent;
       color: var(--muted);
-      font: inherit;
-      font-size: 0.85rem;
+      font-family: var(--mono);
+      font-size: 0.78rem;
       font-weight: 600;
+      min-height: 44px;
       padding: 0.3rem 0.4rem;
       border-radius: var(--r-sm);
       cursor: pointer;
@@ -1040,6 +1169,36 @@
       flex: 0 0 auto;
       min-height: 0;
     }
+    /* Browse-scope segmented control above the roots list. */
+    .scope-selector {
+      display: flex;
+      gap: var(--s1);
+      padding: 0.2rem;
+      border-radius: var(--r-md);
+      border: 1px solid var(--line);
+      background: var(--surface);
+      margin-bottom: var(--s1);
+    }
+    .scope-seg {
+      flex: 1;
+      appearance: none;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 0.6rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      padding: 0.5rem 0.2rem;
+      border-radius: calc(var(--r-md) - 3px);
+      cursor: pointer;
+      transition: background var(--t-fast) ease, color var(--t-fast) ease;
+    }
+    /* The selected range is the one the instrument is set to: amber. */
+    .scope-seg.active { background: var(--panel-raised); color: var(--accent); }
+    .scope-seg:active { color: var(--accent); }
+    .entry-shortcut-badge { flex: 0 0 auto; color: var(--muted); display: inline-flex; }
     .entry-row {
       display: flex;
       align-items: center;
@@ -1060,18 +1219,20 @@
     .entry-row.entry-up { color: var(--muted); font-weight: 600; }
     .entry-row.entry-up .entry-icon { color: var(--muted); }
     .entry-name { flex: 1; min-width: 0; font-size: 0.92rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .entry-fav-star { flex: 0 0 auto; color: var(--warn); }
-    .entry-fav-star .ic { fill: var(--warn); }
+    .entry-fav-star { flex: 0 0 auto; color: var(--fg); }
+    .entry-fav-star .ic { fill: var(--fg); }
     .git-chip {
       flex: 0 0 auto;
       display: inline-flex;
       align-items: center;
       gap: 0.2rem;
-      font-size: 0.62rem;
+      font-family: var(--mono);
+      font-size: 0.58rem;
       font-weight: 700;
-      letter-spacing: 0.02em;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
       padding: 0.2rem 0.45rem;
-      border-radius: var(--r-pill);
+      border-radius: var(--r-sm);
       border: 1px solid var(--line);
       color: var(--muted);
     }
@@ -1131,9 +1292,9 @@
       display: inline-flex;
       align-items: center;
       gap: 0.3rem;
-      min-height: 40px;
+      min-height: 44px;
       border: 1px solid var(--accent-dim);
-      background: rgba(22,101,52,0.28);
+      background: rgba(74,49,6,0.35);
       color: var(--accent);
       font: inherit;
       font-size: 0.78rem;
@@ -1146,7 +1307,7 @@
       appearance: none;
     }
     .trash-restore-btn .ic { width: 0.95rem; height: 0.95rem; }
-    .trash-restore-btn:active { background: var(--accent); color: #052e16; }
+    .trash-restore-btn:active { background: var(--accent); color: var(--bg); }
 
     /* Generic centered overlay: PIN entry, prompt-style input, action sheet, confirms.
        Fast, subtle enter: backdrop fades, card slides/scales in ~150ms, no bounce. */
@@ -1320,8 +1481,8 @@
     .overlay-sheet-item:active { background: var(--surface-2); }
     .overlay-sheet-item.danger { color: var(--danger); }
     .overlay-sheet-item.danger .ic { color: var(--danger); }
-    .overlay-sheet-item.fav-on { color: var(--warn); }
-    .overlay-sheet-item.fav-on .ic { color: var(--warn); fill: var(--warn); }
+    .overlay-sheet-item.fav-on { color: var(--fg); }
+    .overlay-sheet-item.fav-on .ic { color: var(--fg); fill: var(--fg); }
 
     .files-loading-line { font-size: 0.85rem; color: var(--muted); padding: 0.5rem 0.1rem; }
 
@@ -1418,9 +1579,9 @@
     .files-search-input:focus + .files-search-icon { color: var(--accent); }
     .files-search-clear {
       position: absolute;
-      right: 0.5rem;
-      width: 1.7rem;
-      height: 1.7rem;
+      right: 0.35rem;
+      width: 44px;
+      height: 44px;
       border: none;
       background: var(--surface-2);
       color: var(--fg);
@@ -1472,7 +1633,7 @@
       appearance: none;
     }
     .entry-spawn-btn .ic { fill: currentColor; }
-    .entry-spawn-btn:active { color: #e9d5ff; transform: scale(0.9); }
+    .entry-spawn-btn:active { color: var(--spawn); transform: scale(0.9); }
     .git-chip.tappable { cursor: pointer; }
     .git-chip.tappable:active { border-color: var(--accent); color: var(--accent); }
 
@@ -1535,7 +1696,13 @@
     }
     @keyframes skel-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 
-    /* Search-result rows: name + dim parent path */
+    /* Secondary line under a row's name: disk space on roots, parent path on
+       search hits. One rule, so callers never restate it inline. */
+    .entry-sub {
+      font-size: 0.68rem;
+      color: var(--muted);
+    }
+    /* Search-result rows additionally clip the path from the left. */
     .search-row .entry-sub {
       font-size: 0.68rem;
       color: var(--muted);
@@ -1572,9 +1739,9 @@
       text-align: center;
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
-    .git-status.amber { color: #fbbf24; background: rgba(120,53,15,0.4); }
-    .git-status.green { color: var(--accent); background: rgba(22,101,52,0.4); }
-    .git-status.red { color: #f87171; background: rgba(127,29,29,0.4); }
+    .git-status.amber { color: var(--warn); background: rgba(120,53,15,0.4); }
+    .git-status.green { color: var(--warn); background: rgba(120,53,15,0.4); }
+    .git-status.red { color: var(--danger); background: rgba(110,34,34,0.45); }
     .git-status.gray { color: var(--muted); background: rgba(255,255,255,0.06); }
     .git-path { flex: 1; min-width: 0; font-size: 0.78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; unicode-bidi: plaintext; }
 
@@ -1676,6 +1843,31 @@
         <path d="M6 8.4v7.2"/><path d="M18 10.4c0 3.4-2.8 4.6-6 5.2"/>
       </symbol>
       <symbol id="ic-x" viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></symbol>
+      <!-- Faceplate tab glyphs. The Bridge mark is the app icon's span, so the
+           tab and the home-screen icon read as the same object. -->
+      <symbol id="ic-bridge" viewBox="0 0 24 24">
+        <path d="M4.5 16.2Q12 5.6 19.5 16.2"/>
+        <circle cx="4.5" cy="16.6" r="2.1"/>
+        <circle cx="19.5" cy="16.6" r="2.1"/>
+      </symbol>
+      <symbol id="ic-mic" viewBox="0 0 24 24">
+        <rect x="9" y="3" width="6" height="11" rx="3"/>
+        <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"/><path d="M12 18v3"/>
+      </symbol>
+      <symbol id="ic-waveform" viewBox="0 0 24 24">
+        <path d="M3 12h2"/><path d="M8 7.5v9"/><path d="M12 4v16"/>
+        <path d="M16 8.5v7"/><path d="M20 11h1.5"/>
+      </symbol>
+      <!-- Settings as faders, not a cog: legible at 20px, and this app is a
+           console — you set it, you don't service it. -->
+      <symbol id="ic-gear" viewBox="0 0 24 24">
+        <path d="M4 7h9M17.5 7H20"/><circle cx="15.2" cy="7" r="2.1"/>
+        <path d="M4 17h4.5M13 17h7"/><circle cx="10.8" cy="17" r="2.1"/>
+      </symbol>
+      <symbol id="ic-link" viewBox="0 0 24 24">
+        <path d="M10 13.5a3.5 3.5 0 0 0 5 0l3-3a3.5 3.5 0 0 0-5-5l-1.5 1.5"/>
+        <path d="M14 10.5a3.5 3.5 0 0 0-5 0l-3 3a3.5 3.5 0 0 0 5 5L12.5 17"/>
+      </symbol>
       <symbol id="ic-restore" viewBox="0 0 24 24">
         <path d="M4 12a8 8 0 1 1 2.5 5.8"/><path d="M4 8v4h4"/>
       </symbol>
@@ -1783,10 +1975,13 @@
       </button>
     </div>
 
-    <!-- Common deletion (close to PTT / Enter where typing happens) -->
+    <!-- Common deletion (close to PTT / Enter where typing happens).
+         /clear sits here too: it only transmits over the PTT socket, so on any
+         other tab it was a dead button that silently queued keys. -->
     <div class="nav-row">
       <button id="key-backspace" class="nav-btn nav-btn-bksp" type="button">&#x232B; Bksp</button>
       <button id="key-ctrl-w" class="nav-btn nav-btn-bksp" type="button">&#x232B; Word</button>
+      <button id="key-clear" class="clear-btn" type="button" aria-label="Send /clear">/clear</button>
     </div>
 
     <button id="key-enter" class="enter-btn" type="button">Enter &#x21B5;</button>
@@ -2195,19 +2390,49 @@
     </div>
   </div>
 
-  <div class="bottom-bar">
-    <button id="key-clear" class="clear-btn" type="button" aria-label="Send /clear">/clear</button>
-    <div class="mode-switch">
-      <button id="mode-bridge" class="mode-pill active" type="button">Bridge</button>
-      <button id="mode-ptt" class="mode-pill" type="button">PTT</button>
-      <button id="mode-dictate" class="mode-pill" type="button">Dictate</button>
-      <button id="mode-files" class="mode-pill" type="button">Files</button>
-      <button id="mode-history" class="mode-pill" type="button">History</button>
-      <!-- Gear rather than "Settings": six word-pills overflow a phone. -->
-      <button id="mode-settings" class="mode-pill" type="button" aria-label="Voice settings">&#9881;&#65038;</button>
+  <!-- More: the two low-traffic destinations plus the escape hatch, off the
+       faceplate so five slots always fit without scrolling. -->
+  <div id="more-overlay" class="overlay-backdrop" hidden>
+    <div class="overlay-card">
+      <div class="sheet-grip"></div>
+      <div class="overlay-title">More</div>
+      <button id="mode-history" class="overlay-sheet-item" type="button">
+        <svg class="ic" aria-hidden="true"><use href="#ic-clock"/></svg> Dictation history
+      </button>
+      <button id="mode-settings" class="overlay-sheet-item" type="button">
+        <svg class="ic" aria-hidden="true"><use href="#ic-gear"/></svg> Settings
+      </button>
+      <button id="refresh-btn" class="overlay-sheet-item" type="button">
+        <svg class="ic" aria-hidden="true"><use href="#ic-restore"/></svg> Reload page
+      </button>
+      <button id="more-cancel" class="overlay-sheet-item" type="button">
+        <svg class="ic" aria-hidden="true"><use href="#ic-x"/></svg> Cancel
+      </button>
     </div>
-    <button id="refresh-btn" class="refresh-btn" type="button" aria-label="Reload page">&#x21BB;</button>
   </div>
+
+  <nav class="bottom-bar" aria-label="Sections">
+    <button id="mode-bridge" class="console-tab active" type="button">
+      <svg class="ic" aria-hidden="true"><use href="#ic-bridge"/></svg>
+      <span class="console-tab-label">Bridge</span>
+    </button>
+    <button id="mode-ptt" class="console-tab" type="button">
+      <svg class="ic" aria-hidden="true"><use href="#ic-mic"/></svg>
+      <span class="console-tab-label">PTT</span>
+    </button>
+    <button id="mode-dictate" class="console-tab" type="button">
+      <svg class="ic" aria-hidden="true"><use href="#ic-waveform"/></svg>
+      <span class="console-tab-label">Dictate</span>
+    </button>
+    <button id="mode-files" class="console-tab" type="button">
+      <svg class="ic" aria-hidden="true"><use href="#ic-folder"/></svg>
+      <span class="console-tab-label">Files</span>
+    </button>
+    <button id="mode-more" class="console-tab" type="button">
+      <svg class="ic" aria-hidden="true"><use href="#ic-more"/></svg>
+      <span class="console-tab-label">More</span>
+    </button>
+  </nav>
 
   <div id="toast"></div>
   <script src="/app.js"></script>

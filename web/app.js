@@ -9,6 +9,31 @@ const toastEl = document.getElementById('toast');
 // Toast: brief overlay messages. Replaces the old footer text area so the
 // layout never has to make room for variable-length status strings.
 let toastTimer = null;
+// Turn a thrown value into something worth showing a person. DOM exceptions name
+// internals ("NotAllowedError") and say nothing about what to do next, so the
+// cases we actually hit get a plain-language line with the fix in it.
+function friendlyError(err) {
+  const name = (err && err.name) || '';
+  const raw = String((err && err.message) || err || '').trim();
+  switch (name) {
+    case 'NotAllowedError':
+      return 'Mic denied — allow in Settings › Safari';
+    case 'NotFoundError':
+      return 'No microphone found on this device';
+    case 'NotReadableError':
+      return 'Another app is using the mic';
+    case 'AbortError':
+      return 'That took too long — try again';
+    default:
+      break;
+  }
+  if (/Failed to fetch|NetworkError|Load failed/i.test(raw)) {
+    return "Can't reach the PC — is the bridge still running?";
+  }
+  // Strip a leading "SomeError: " so a fallback still reads as a sentence.
+  return raw.replace(/^[A-Za-z]*Error:\s*/, '') || 'Something went wrong';
+}
+
 function toast(msg, duration = 2500) {
   if (!msg) return;
   toastEl.textContent = msg;
@@ -533,7 +558,7 @@ async function startAudio() {
   } catch (e) {
     audioIntentOn = false;
     setAudioState(false, 'audio init failed');
-    setFooter(String(e));
+    setFooter(friendlyError(e));
     return;
   }
 
@@ -669,7 +694,7 @@ async function startMic() {
   } catch (e) {
     micIntentOn = false;
     setMicState(false, 'mic denied');
-    setFooter(String(e));
+    setFooter(friendlyError(e));
     return;
   }
 
@@ -700,7 +725,7 @@ async function startMic() {
   } catch (e) {
     micIntentOn = false;
     setMicState(false, 'audio init failed');
-    setFooter(String(e));
+    setFooter(friendlyError(e));
     teardownMic();
     return;
   }
@@ -1019,7 +1044,7 @@ async function activatePtt() {
     });
   } catch (e) {
     setPttUi('Activate', 'mic denied', null);
-    setFooter(String(e));
+    setFooter(friendlyError(e));
     return;
   }
   // Release immediately -- iOS will deactivate the voice-chat session within
@@ -1110,7 +1135,7 @@ async function startTransmitting() {
     pttTransmitting = false;
     pttActivated = false;
     setPttUi('Activate', 'mic acquire failed', null);
-    setFooter(String(e));
+    setFooter(friendlyError(e));
     if (pttWs && pttWs.readyState === WebSocket.OPEN) {
       pttWs.send(talkProtocol + ':stop');
     }
@@ -1151,7 +1176,7 @@ async function startTransmitting() {
     if (myGen !== pttTalkGen) { teardownTalkingMic(); return; }
     pttTransmitting = false;
     setPttUi('Push to Talk', 'audio init failed', null);
-    setFooter(String(e));
+    setFooter(friendlyError(e));
     teardownTalkingMic();
     if (pttWs && pttWs.readyState === WebSocket.OPEN) {
       pttWs.send(talkProtocol + ':stop');
@@ -1740,7 +1765,7 @@ async function apiFetch(url, opts = {}) {
   try {
     res = await fetch(url, Object.assign({}, opts, { headers }));
   } catch (e) {
-    toast(String(e && e.message || e));
+    toast(friendlyError(e));
     throw e;
   }
 
@@ -1813,6 +1838,7 @@ function showConfirm(title) {
 // ---- Files browser state ---------------------------------------------------
 
 let filesTabActive = false;
+let filesScope = 'roots'; // 'roots' | 'profile' | 'drives' -- from /api/roots
 let filesEffectiveRoots = [];
 let filesShortcuts = []; // cached from /api/roots -- no extra fetches for the Quick access row
 let filesCurrentPath = null; // null = showing the roots list
@@ -1840,9 +1866,25 @@ function filesPathTail(p) {
 
 async function loadRoots() {
   const data = await apiFetch('/api/roots');
+  filesScope = data.scope || 'roots';
   filesEffectiveRoots = data.effectiveRoots || [];
   filesShortcuts = data.shortcuts || [];
   return data;
+}
+
+// Switch how much of the PC the Files tab can browse. Persists server-side and
+// re-renders the roots list with the new effective roots.
+async function setScope(scope) {
+  if (scope === filesScope) return;
+  try {
+    const data = await apiFetch('/api/scope', {
+      method: 'POST',
+      body: JSON.stringify({ scope }),
+    });
+    filesScope = data.scope || scope;
+    filesEffectiveRoots = data.effectiveRoots || [];
+    renderEntryList();
+  } catch (_) { /* toast shown by apiFetch */ }
 }
 
 // Two-tap kill state, keyed by session id, held in JS (NEVER in the DOM) so a
@@ -1990,7 +2032,7 @@ sessionsListEl.addEventListener('click', (e) => {
       openPeek(id);
     }
   } catch (err) {
-    toast(String(err));
+    toast(friendlyError(err));
   }
 });
 
@@ -2223,11 +2265,35 @@ function fetchGitStatusLazily(entries) {
 // without per-row closures.
 let entryByPath = new Map();
 
+// Segmented control for the browse scope, shown above the roots list. Tapping a
+// segment POSTs /api/scope and re-renders.
+function renderScopeSelector() {
+  const wrap = document.createElement('div');
+  wrap.className = 'scope-selector';
+  const opts = [
+    { key: 'roots', label: 'Folders' },
+    { key: 'profile', label: 'Profile' },
+    { key: 'drives', label: 'All drives' },
+  ];
+  opts.forEach((o) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'scope-seg' + (filesScope === o.key ? ' active' : '');
+    btn.textContent = o.label;
+    btn.addEventListener('click', () => setScope(o.key));
+    wrap.appendChild(btn);
+  });
+  return wrap;
+}
+
 function renderEntryList() {
   entryListEl.innerHTML = '';
   entryByPath = new Map();
 
   if (filesCurrentPath === null) {
+    // Scope selector: how much of the PC is browsable. "All drives" exposes the
+    // whole machine; "Profile" is C:\Users\<you>; "Roots" the configured folders.
+    entryListEl.appendChild(renderScopeSelector());
     // Roots list -- each root row shows a disk-space line when known.
     filesEffectiveRoots.forEach((r) => {
       const row = document.createElement('div');
@@ -2250,8 +2316,6 @@ function renderEntryList() {
       if (disk) {
         const sub = document.createElement('div');
         sub.className = 'entry-sub';
-        sub.style.fontSize = '0.68rem';
-        sub.style.color = 'var(--muted)';
         sub.textContent = disk;
         wrap.appendChild(sub);
       }
@@ -2295,6 +2359,14 @@ function renderEntryList() {
     name.className = 'entry-name';
     name.textContent = e.name;
     row.appendChild(name);
+
+    // A folder that is really a resolved .lnk shortcut gets a small link glyph.
+    if (e.isShortcut) {
+      const badge = document.createElement('span');
+      badge.className = 'entry-shortcut-badge';
+      badge.appendChild(svgIcon('link', 'ic-sm'));
+      row.appendChild(badge);
+    }
 
     if (e.favorite) {
       const star = document.createElement('span');
@@ -2388,7 +2460,7 @@ entryListEl.addEventListener('click', (e) => {
       quickSpawn(path);
     }
   } catch (err) {
-    toast(String(err));
+    toast(friendlyError(err));
   }
 });
 
@@ -2551,7 +2623,7 @@ function historyRowClick(e) {
     }
     if (target.dataset.action === 'nav') navigateTo(path);
   } catch (err) {
-    toast(String(err));
+    toast(friendlyError(err));
   }
 }
 recentListEl.addEventListener('click', historyRowClick);
@@ -2663,7 +2735,7 @@ trashListEl.addEventListener('click', async (e) => {
       renderTrashList();
     } catch (_) { /* toast already shown */ }
   } catch (err) {
-    toast(String(err));
+    toast(friendlyError(err));
   }
 });
 
@@ -2982,7 +3054,7 @@ searchResultsEl.addEventListener('click', (e) => {
       openViewer(path, d ? d.name : filesPathTail(path));
     }
   } catch (err) {
-    toast(String(err));
+    toast(friendlyError(err));
   }
 });
 
@@ -3084,7 +3156,7 @@ async function openViewer(path, name) {
     note.className = 'viewer-note';
     note.textContent = String((e && e.message) || e);
     viewerBodyEl.appendChild(note);
-    toast(String((e && e.message) || e));
+    toast(friendlyError(e));
     return;
   }
 
@@ -3176,7 +3248,7 @@ filesUploadInput.addEventListener('change', async () => {
     toast(uploadSummaryText(data));
     navigateTo(filesCurrentPath); // refresh the listing
   } catch (e) {
-    toast(String((e && e.message) || e));
+    toast(friendlyError(e));
   }
 });
 
@@ -3324,7 +3396,7 @@ peekKillBtn.addEventListener('click', () => {
       peekKillTimer = setTimeout(() => { resetPeekKill(); }, KILL_WINDOW_MS);
     }
   } catch (err) {
-    toast(String(err));
+    toast(friendlyError(err));
   }
 });
 
@@ -3779,7 +3851,7 @@ dictateModesEl.addEventListener('click', (e) => {
     renderVoiceModeChips();
     renderVoiceModes();
     saveVoiceSettings(true);
-  } catch (err) { toast(String(err)); }
+  } catch (err) { toast(friendlyError(err)); }
 });
 
 // Called for every dictation-done frame. Returns the view so the caller can
@@ -3834,7 +3906,7 @@ voiceProviderRowEl.addEventListener('click', (e) => {
     voiceKeyInput.value = '';
     renderVoiceProviders();
     renderVoiceKeyField();
-  } catch (err) { toast(String(err)); }
+  } catch (err) { toast(friendlyError(err)); }
 });
 
 voiceModelInput.addEventListener('input', () => {
@@ -3962,7 +4034,7 @@ function renderVoiceModes() {
   if (!modes.length) {
     const empty = document.createElement('div');
     empty.className = 'files-muted-line';
-    empty.textContent = 'No modes';
+    empty.textContent = 'No modes yet';
     voiceModesListEl.appendChild(empty);
     return;
   }
@@ -4048,7 +4120,7 @@ voiceModesListEl.addEventListener('click', (e) => {
       renderVoiceModes();
       renderVoiceModeChips();
     }
-  } catch (err) { toast(String(err)); }
+  } catch (err) { toast(friendlyError(err)); }
 });
 
 document.getElementById('voice-mode-add').addEventListener('click', async () => {
@@ -4135,7 +4207,7 @@ voiceReplListEl.addEventListener('click', (e) => {
     if (!t || !voiceSettings) return;
     voiceSettings.replacements.splice(Number(t.dataset.index), 1);
     renderVoiceReplacements();
-  } catch (err) { toast(String(err)); }
+  } catch (err) { toast(friendlyError(err)); }
 });
 
 document.getElementById('voice-repl-add').addEventListener('click', () => {
@@ -4171,7 +4243,7 @@ voiceVocabListEl.addEventListener('click', (e) => {
     if (!t || !voiceSettings) return;
     voiceSettings.vocabulary.splice(Number(t.dataset.index), 1);
     renderVoiceVocab();
-  } catch (err) { toast(String(err)); }
+  } catch (err) { toast(friendlyError(err)); }
 });
 
 function voiceAddVocab() {
@@ -4403,7 +4475,7 @@ voiceHistoryListEl.addEventListener('click', async (e) => {
       renderVoiceHistory();
       loadVoiceStats();
     }
-  } catch (err) { toast(String(err)); }
+  } catch (err) { toast(friendlyError(err)); }
 });
 
 voiceSearchInput.addEventListener('input', () => {
@@ -4441,6 +4513,8 @@ const modeFilesBtn = document.getElementById('mode-files');
 const modeDictateBtn = document.getElementById('mode-dictate');
 const modeHistoryBtn = document.getElementById('mode-history');
 const modeSettingsBtn = document.getElementById('mode-settings');
+const modeMoreBtn = document.getElementById('mode-more');
+const moreOverlay = document.getElementById('more-overlay');
 const viewBridge = document.getElementById('view-bridge');
 const viewPtt = document.getElementById('view-ptt');
 const viewFiles = document.getElementById('view-files');
@@ -4493,8 +4567,9 @@ async function setMode(mode) {
   modePttBtn.classList.toggle('active', mode === 'ptt');
   modeFilesBtn.classList.toggle('active', mode === 'files');
   modeDictateBtn.classList.toggle('active', mode === 'dictate');
-  modeSettingsBtn.classList.toggle('active', mode === 'settings');
-  modeHistoryBtn.classList.toggle('active', mode === 'history');
+  // History and Settings live inside the More sheet, so the More lamp stands in
+  // for them on the faceplate -- otherwise those modes would light nothing.
+  modeMoreBtn.classList.toggle('active', mode === 'settings' || mode === 'history');
 
   if (TALK_MODES.includes(mode)) {
     // Decides whether the server routes audio to the virtual cable or keeps
@@ -4536,8 +4611,16 @@ modeBridgeBtn.addEventListener('click', () => setMode('bridge'));
 modePttBtn.addEventListener('click', () => setMode('ptt'));
 modeFilesBtn.addEventListener('click', () => setMode('files'));
 modeDictateBtn.addEventListener('click', () => setMode('dictate'));
-modeHistoryBtn.addEventListener('click', () => setMode('history'));
-modeSettingsBtn.addEventListener('click', () => setMode('settings'));
+// History/Settings live in the More sheet: pick one, the sheet closes behind it.
+modeHistoryBtn.addEventListener('click', () => { closeMoreSheet(); setMode('history'); });
+modeSettingsBtn.addEventListener('click', () => { closeMoreSheet(); setMode('settings'); });
+
+function openMoreSheet() { moreOverlay.hidden = false; }
+function closeMoreSheet() { moreOverlay.hidden = true; }
+modeMoreBtn.addEventListener('click', openMoreSheet);
+document.getElementById('more-cancel').addEventListener('click', closeMoreSheet);
+// Tapping the dimmed backdrop (but not the card) dismisses, matching the other sheets.
+moreOverlay.addEventListener('click', (e) => { if (e.target === moreOverlay) closeMoreSheet(); });
 
 // Manual reload -- when the page is a home-screen web clip there's no Safari
 // chrome to pull-to-refresh, so this is the only way out of a wedged state.

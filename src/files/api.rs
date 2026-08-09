@@ -151,6 +151,38 @@ fn disk_space(path: &str) -> (Option<u64>, Option<u64>) {
     }
 }
 
+// --- POST /api/scope ---
+
+#[derive(Deserialize)]
+pub struct ScopeBody {
+    scope: String,
+}
+
+/// Change how much of the filesystem the Files tab may browse. Mirrors the
+/// tray's Folder-access submenu so the scope can be switched from the phone.
+pub async fn set_scope(State(state): State<AppState>, Json(body): Json<ScopeBody>) -> Response {
+    let scope = match body.scope.as_str() {
+        "roots" => config::Scope::Roots,
+        "profile" => config::Scope::Profile,
+        "drives" => config::Scope::Drives,
+        other => return err(StatusCode::BAD_REQUEST, &format!("unknown scope: {other}")),
+    };
+    let snapshot = {
+        let mut cfg = state.config.write().unwrap();
+        cfg.scope = scope;
+        cfg.clone()
+    };
+    config::save(&snapshot);
+    log_both(&format!("[files] scope -> {scope:?} (via phone)"));
+    // Echo back the new effective roots so the client can re-render immediately.
+    let effective = snapshot.effective_named_roots();
+    Json(json!({
+        "scope": body.scope,
+        "effectiveRoots": named_roots_with_space_json(&effective),
+    }))
+    .into_response()
+}
+
 // --- GET /api/ls?path=<abs> ---
 
 #[derive(Deserialize)]
@@ -169,7 +201,17 @@ pub async fn ls(State(state): State<AppState>, Query(q): Query<PathQuery>) -> Re
         Err(e) => return err(StatusCode::BAD_REQUEST, &format!("cannot read directory: {e}")),
     };
 
-    let mut entries: Vec<serde_json::Value> = Vec::new();
+    // First pass: raw directory entries. `.lnk` targets are filled in below.
+    struct Row {
+        name: String,
+        path: String,
+        is_dir: bool,
+        is_repo: bool,
+        mtime_ms: u64,
+        is_shortcut: bool,
+    }
+    let mut rows: Vec<Row> = Vec::new();
+    let mut lnk_paths: Vec<String> = Vec::new();
     for de in read.flatten() {
         let p = de.path();
         let name = de.file_name().to_string_lossy().into_owned();
@@ -182,14 +224,66 @@ pub async fn ls(State(state): State<AppState>, Query(q): Query<PathQuery>) -> Re
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
         let is_repo = is_dir && p.join(".git").is_dir();
-        entries.push(json!({
-            "name": name,
-            "path": p.to_string_lossy(),
-            "isDir": is_dir,
-            "isRepo": is_repo,
-            "mtimeMs": mtime_ms,
-        }));
+        let path_str = p.to_string_lossy().into_owned();
+        if !is_dir && crate::files::lnk::is_lnk(&name) {
+            lnk_paths.push(path_str.clone());
+        }
+        rows.push(Row {
+            name,
+            path: path_str,
+            is_dir,
+            is_repo,
+            mtime_ms,
+            is_shortcut: false,
+        });
     }
+
+    // Resolve `.lnk` files that point at a *folder inside the current scope* into
+    // navigable folder rows (path repointed at the target). Shortcuts to files,
+    // exes, or folders outside the scope are left as plain downloadable `.lnk`s.
+    if !lnk_paths.is_empty() {
+        let resolved =
+            tokio::task::spawn_blocking(move || crate::files::lnk::resolve_targets(&lnk_paths))
+                .await
+                .unwrap_or_default();
+        for row in rows.iter_mut() {
+            if row.is_dir {
+                continue;
+            }
+            let Some(r) = resolved.get(&row.path.to_lowercase()) else {
+                continue;
+            };
+            if !r.is_dir || r.target.is_empty() {
+                continue;
+            }
+            let target = Path::new(&r.target);
+            let Ok(canon_target) = pathsafe::canonicalize(target) else {
+                continue;
+            };
+            if !pathsafe::is_path_allowed(&canon_target, &canon_roots) {
+                continue;
+            }
+            row.name = crate::files::lnk::strip_lnk(&row.name);
+            row.path = canon_target.to_string_lossy().into_owned();
+            row.is_dir = true;
+            row.is_repo = canon_target.join(".git").is_dir();
+            row.is_shortcut = true;
+        }
+    }
+
+    let mut entries: Vec<serde_json::Value> = rows
+        .into_iter()
+        .map(|r| {
+            json!({
+                "name": r.name,
+                "path": r.path,
+                "isDir": r.is_dir,
+                "isRepo": r.is_repo,
+                "mtimeMs": r.mtime_ms,
+                "isShortcut": r.is_shortcut,
+            })
+        })
+        .collect();
 
     // Dirs first, then files; each group alphabetical, case-insensitive.
     entries.sort_by(|a, b| {

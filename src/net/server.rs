@@ -37,6 +37,31 @@ const APP_JS: &str = include_str!("../../web/app.js");
 const WORKLET_JS: &str = include_str!("../../web/worklet.js");
 const MIC_WORKLET_JS: &str = include_str!("../../web/mic-worklet.js");
 
+// Home-screen / tab icons. Baked into the binary like every other asset so the
+// app stays a single self-contained exe.
+const ICON_180: &[u8] = include_bytes!("../../web/icon-180.png");
+const ICON_192: &[u8] = include_bytes!("../../web/icon-192.png");
+const ICON_512: &[u8] = include_bytes!("../../web/icon-512.png");
+const ICON_32: &[u8] = include_bytes!("../../web/icon-32.png");
+
+/// Web-app manifest, so "Add to Home Screen" installs this as a standalone app
+/// (its own window, no Safari chrome) rather than a bookmark.
+const MANIFEST: &str = r##"{
+  "name": "iPhone Bridge",
+  "short_name": "Bridge",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0B0E10",
+  "theme_color": "#0B0E10",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}"##;
+
 // Tell every browser (including the iOS home-screen web-clip cache) to never
 // serve a stale copy. Assets are tiny and rebuilds change them on every deploy.
 const NO_STORE: &str = "no-store, no-cache, must-revalidate, max-age=0";
@@ -58,6 +83,28 @@ async fn index() -> StaticResponse {
 }
 async fn app_js() -> StaticResponse {
     static_response("application/javascript", APP_JS)
+}
+
+/// Binary sibling of `static_response`, for the PNG icons.
+type StaticBytesResponse = ([(axum::http::HeaderName, &'static str); 2], &'static [u8]);
+
+fn static_bytes(content_type: &'static str, body: &'static [u8]) -> StaticBytesResponse {
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, content_type),
+            (axum::http::header::CACHE_CONTROL, NO_STORE),
+        ],
+        body,
+    )
+}
+
+async fn icon_180() -> StaticBytesResponse { static_bytes("image/png", ICON_180) }
+async fn icon_192() -> StaticBytesResponse { static_bytes("image/png", ICON_192) }
+async fn icon_512() -> StaticBytesResponse { static_bytes("image/png", ICON_512) }
+async fn icon_32() -> StaticBytesResponse { static_bytes("image/png", ICON_32) }
+
+async fn manifest() -> StaticResponse {
+    static_response("application/manifest+json", MANIFEST)
 }
 async fn worklet_js() -> StaticResponse {
     static_response("application/javascript", WORKLET_JS)
@@ -183,6 +230,7 @@ fn router(
     let api = Router::new()
         .merge(dictate_route)
         .route("/api/roots", get(files_api::roots))
+        .route("/api/scope", post(files_api::set_scope))
         .route("/api/ls", get(files_api::ls))
         .route("/api/gitstatus", get(files_api::gitstatus))
         .route("/api/mkdir", post(files_api::mkdir))
@@ -222,6 +270,12 @@ fn router(
     Router::new()
         .route("/", get(index))
         .route("/app.js", get(app_js))
+        .route("/icon-180.png", get(icon_180))
+        .route("/icon-192.png", get(icon_192))
+        .route("/icon-512.png", get(icon_512))
+        .route("/icon-32.png", get(icon_32))
+        .route("/favicon.ico", get(icon_32))
+        .route("/manifest.webmanifest", get(manifest))
         .route("/worklet.js", get(worklet_js))
         .route("/mic-worklet.js", get(mic_worklet_js))
         .route("/audio", get(ws_audio))
