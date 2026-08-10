@@ -4,11 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <!-- Home-screen install: its own window, no Safari chrome, dark from the
-       first frame. black-translucent lets the plate run under the status bar;
-       body's safe-area padding keeps content clear of it. -->
+       first frame. Status bar style is "default", NOT "black-translucent":
+       on iOS 26 the translucent mode shrinks the app window by the status
+       bar's height while still anchoring it at the top, stranding that
+       height as a dead band at the bottom (measured: 402x812 granted on a
+       402x874 iPhone 17 Pro, 62pt = status bar). Default mode puts the
+       window below the status bar and flush to the bottom edge. These
+       settings are baked into the icon at Add-to-Home-Screen time, so
+       changing them requires re-adding the icon. -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Bridge">
   <meta name="theme-color" content="#0B0E10">
   <link rel="apple-touch-icon" href="/icon-180.png">

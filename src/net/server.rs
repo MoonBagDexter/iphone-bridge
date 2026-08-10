@@ -52,6 +52,7 @@ const MANIFEST: &str = r##"{
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["fullscreen", "standalone"],
   "orientation": "portrait",
   "background_color": "#0B0E10",
   "theme_color": "#0B0E10",

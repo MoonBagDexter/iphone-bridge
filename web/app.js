@@ -4771,6 +4771,7 @@ function toggleViewportDebug() {
       `inner:      ${window.innerWidth} x ${window.innerHeight}`,
       `visualVp:   ${Math.round(visualViewport.width)} x ${Math.round(visualViewport.height)}`,
       `body:       ${Math.round(document.body.getBoundingClientRect().height)}`,
+      `winPos:     ${window.screenX}, ${window.screenY}`,
       `dpr:        ${devicePixelRatio}`,
     ].join('\n');
   };
@@ -4798,6 +4799,10 @@ function reportViewport(tag) {
       screen: [screen.width, screen.height],
       inner: [window.innerWidth, window.innerHeight],
       visual: [Math.round(visualViewport.width), Math.round(visualViewport.height)],
+      // Where the window sits on the physical screen: [0, 62] means "below the
+      // status bar" (good), [0, 0] with a short height means "top-anchored with
+      // the missing pixels stranded at the bottom" (the iOS 26 bug).
+      pos: [window.screenX, window.screenY],
       dpr: devicePixelRatio,
     });
     if (!(navigator.sendBeacon && navigator.sendBeacon('/api/viewport', payload))) {
