@@ -269,6 +269,7 @@ fn router(
 
     Router::new()
         .route("/", get(index))
+        .route("/api/viewport", post(viewport_report))
         .route("/app.js", get(app_js))
         .route("/icon-180.png", get(icon_180))
         .route("/icon-192.png", get(icon_192))
@@ -282,6 +283,17 @@ fn router(
         .route("/mic", get(ws_mic))
         .merge(api)
         .with_state(state)
+}
+
+/// The phone posts its viewport geometry here on every page open, and it goes
+/// straight to bridge.log -- so "the app is letterboxed on the iPhone" can be
+/// diagnosed from the PC without asking the owner for screenshots. Unauthenticated
+/// on purpose: it accepts a few hundred bytes of numbers and only writes a log line.
+async fn viewport_report(body: String) -> &'static str {
+    let mut line: String = body.chars().take(400).collect();
+    line.retain(|c| !c.is_control());
+    crate::logging::log_both(&format!("[viewport] {line}"));
+    "ok"
 }
 
 /// Build the `RustlsConfig` up front so the caller can hold a clone of it and

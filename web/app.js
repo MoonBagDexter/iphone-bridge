@@ -4786,3 +4786,23 @@ document.getElementById('debug-btn').addEventListener('click', () => {
   toggleViewportDebug();
 });
 if (location.hash === '#debug') toggleViewportDebug();
+
+// Phone -> PC geometry report, logged to bridge.log on every page open, so
+// letterboxing can be diagnosed from the PC without asking for screenshots.
+// visualViewport is read after a tick: iOS reports stale sizes at pageshow.
+function reportViewport(tag) {
+  try {
+    const payload = JSON.stringify({
+      tag,
+      standalone: window.matchMedia('(display-mode: standalone)').matches,
+      screen: [screen.width, screen.height],
+      inner: [window.innerWidth, window.innerHeight],
+      visual: [Math.round(visualViewport.width), Math.round(visualViewport.height)],
+      dpr: devicePixelRatio,
+    });
+    if (!(navigator.sendBeacon && navigator.sendBeacon('/api/viewport', payload))) {
+      fetch('/api/viewport', { method: 'POST', body: payload }).catch(() => {});
+    }
+  } catch (_) { /* diagnostics must never break the app */ }
+}
+window.addEventListener('pageshow', () => setTimeout(() => reportViewport('pageshow'), 300));

@@ -87,6 +87,12 @@
          inset; body reserves exactly the same amount. */
       --tabbar-h: 3.05rem;
 
+      /* How much of the home-indicator inset the layout respects. iOS asks
+         for ~34px of cushion; native tab bars sink into that zone, and the
+         owner wants the pixels, not the cushion -- so keep only a sliver.
+         Resolves to 0 on squared-off screens (env is 0, max clamps). */
+      --inset-b: max(calc(env(safe-area-inset-bottom, 0px) - 20px), 0px);
+
       --s1: 0.25rem; --s2: 0.4rem; --s3: 0.6rem; --s4: 0.9rem; --s5: 1.2rem;
       --r-sm: 0.4rem; --r-md: 0.65rem; --r-lg: 0.9rem; --r-pill: 999px;
       --t-fast: 150ms;
@@ -128,7 +134,7 @@
          floating short of the screen bottom on a home-screen install.
          The faceplate is position:fixed, so body only has to RESERVE its space. */
       padding-top: calc(env(safe-area-inset-top, 0px) + 0.6rem);
-      padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px));
+      padding-bottom: calc(var(--tabbar-h) + var(--inset-b));
       /* max() keeps content clear of the rounded corners and, in landscape, the
          notch side -- the display curve must never clip a control. */
       padding-left: max(env(safe-area-inset-left, 0px), 0.6rem);
@@ -798,9 +804,9 @@
       right: 0;
       bottom: 0;
       z-index: 40;
-      height: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px));
+      height: calc(var(--tabbar-h) + var(--inset-b));
       padding-top: 0;
-      padding-bottom: env(safe-area-inset-bottom, 0px);
+      padding-bottom: var(--inset-b);
       /* Keep the outer two tabs off the curved corners. */
       padding-left: max(env(safe-area-inset-left, 0px), 0.5rem);
       padding-right: max(env(safe-area-inset-right, 0px), 0.5rem);
