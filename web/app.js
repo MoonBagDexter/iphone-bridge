@@ -833,9 +833,10 @@ micBtn.addEventListener('click', async () => {
 // /mic WebSocket (kept open for the whole session). Subsequent taps toggle
 // transmission and send "ptt:start" / "ptt:stop" text frames on the same WS,
 // guaranteeing strict ordering between the last PCM byte and the stop signal.
-// The server taps Alt immediately on start, and on stop it waits for the
-// WASAPI render queue + VB-CABLE to drain before tapping Alt -- so SuperWhisper
-// sees the full tail of the user's speech before its hotkey ends listening.
+// The server presses the dictation app's hotkey (config `ptt_hotkey`, default
+// Wispr Flow's hands-free toggle) immediately on start, and on stop it waits
+// for the WASAPI render queue + VB-CABLE to drain before pressing it again --
+// so the app sees the full tail of the user's speech before it stops listening.
 
 const pttBtn = document.getElementById('ptt-btn');
 const pttLabelEl = document.getElementById('ptt-label');
@@ -850,7 +851,7 @@ let pttWs = null;
 let pttDrainTimer = null;
 
 // Which server behaviour the big button drives. PTT mode routes mic audio to
-// the virtual cable and taps Alt so SuperWhisper hears it; Dictate mode has
+// the virtual cable and presses the hotkey so Wispr Flow hears it; Dictate mode has
 // the bridge keep the audio and run whisper.cpp on it. Everything else --
 // socket, reconnect, press handling, mic graph -- is identical, so the two
 // modes differ only in this prefix.
@@ -868,8 +869,9 @@ const pttWsBackoff = createBackoffScheduler(() => openPttWs(), () => pttModeActi
 // True when the user pressed PTT but the WS wasn't OPEN yet, so we haven't
 // actually sent ptt:start. Without this the first press after Slide-Over
 // returns is eaten by the reconnect window: the start is dropped silently,
-// release sends a stop, server taps Alt anyway, and SuperWhisper interprets
-// the lone Alt as "start listening" -- forcing a second tap to toggle off.
+// release sends a stop, server presses the hotkey anyway, and the dictation
+// app interprets the lone press as "start listening" -- forcing a second tap
+// to toggle off.
 let pttStartPending = false;
 
 const dictateBtn = document.getElementById('dictate-btn');
@@ -1094,11 +1096,11 @@ function teardownPtt() {
   }
 }
 
-// Press starts here. Tap Alt server-side FIRST (before the ~100-300ms iOS
-// mic spinup) so SuperWhisper starts listening as fast as possible. PCM
-// frames begin flowing once the AudioContext is ready; the very first
-// transient of speech may be lost but everything from "spinup done" onward
-// is captured, and SuperWhisper's own VAD handles the leading edge.
+// Press starts here. Press the hotkey server-side FIRST (before the
+// ~100-300ms iOS mic spinup) so the dictation app starts listening as fast
+// as possible. PCM frames begin flowing once the AudioContext is ready; the
+// very first transient of speech may be lost but everything from "spinup
+// done" onward is captured, and the app's own VAD handles the leading edge.
 async function startTransmitting() {
   pttTransmitting = true;
   setPttUi('Listening…', 'release / tap to stop', 'on');
@@ -1235,8 +1237,13 @@ function stopTransmitting() {
 // - Release after HOLD_MS -> stop transmitting (hold-to-talk).
 // - Press while already transmitting -> stop (toggle off).
 // pointercancel is treated identically to pointerup so a system-stolen gesture
-// still cleanly closes the transmission instead of leaving SuperWhisper hot.
-const PTT_HOLD_MS = 250;
+// still cleanly closes the transmission instead of leaving the dictation app hot.
+//
+// HOLD_MS was originally 250, which misread relaxed thumb taps (250-400ms of
+// contact) as holds: the transmission opened on touch and closed on lift,
+// producing instant start/stop "glitches" and 0.0s dictations in bridge.log.
+// 600ms means only a deliberate press-and-speak counts as a hold.
+const PTT_HOLD_MS = 600;
 
 // --- ptt-press-machine (pure; tested by tests/ptt-press.test.mjs) ---
 // No DOM/globals in here -- event handlers below are thin adapters that feed
@@ -1503,6 +1510,12 @@ document.getElementById('key-resume').addEventListener('click', () => sendKey('r
 document.getElementById('key-push').addEventListener('click', () => sendKey('push'));
 document.getElementById('key-min-window').addEventListener('click', () => sendKey('min-window'));
 document.getElementById('key-clear').addEventListener('click', () => sendKey('clear'));
+
+// Dictate-view fix-up keys: Select All + Backspace let a bad dictation be
+// wiped and redone from the phone. Same /mic transport as the PTT nav keys,
+// which is open in Dictate mode too (TALK_MODES share the socket).
+document.getElementById('dictate-ctrl-a').addEventListener('click', () => sendKey('ctrl-a'));
+bindHoldRepeat(document.getElementById('dictate-backspace'), 'backspace');
 
 // ---- Files tab --------------------------------------------------------
 // Browse PC folders, manage them, and spawn Claude Code sessions. All network

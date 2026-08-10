@@ -115,7 +115,7 @@ test('not-yet-activated: first down just activates', () => {
   assertEqual(s1.activePointerId, 1, 'press should still be tracked as active');
 });
 
-test('first tap -> startTx, stays on after up (<250ms)', () => {
+test('first tap -> startTx, stays on after up (within the hold window)', () => {
   let state = freshActivatedState();
 
   let r = pttPressReduce(state, { type: 'down', pointerId: 1 }, 1000);
@@ -152,7 +152,12 @@ test('quick second tap 150ms later -> stopTx (the bug case)', () => {
   assertEqual(r.actions, [], 'release of the toggle-off tap should not double-fire stopTx');
 });
 
-test('hold 400ms -> startTx on down, stopTx on release', () => {
+test('a relaxed 400ms tap still counts as a tap (keeps transmitting)', () => {
+  // The bug behind "tap just glitches off": a normal thumb tap keeps contact
+  // for 250-400ms, so with a 250ms threshold it was classified as a hold and
+  // the transmission stopped the moment the finger lifted -- bridge.log showed
+  // dictations of "0 chars in 0.0s of audio". Only deliberate holds should
+  // stop on release.
   let state = freshActivatedState();
 
   let r = pttPressReduce(state, { type: 'down', pointerId: 1 }, 0);
@@ -161,7 +166,20 @@ test('hold 400ms -> startTx on down, stopTx on release', () => {
 
   r = pttPressReduce(state, { type: 'up', pointerId: 1 }, 400);
   state = r.state;
-  assertEqual(r.actions, ['stopTx'], 'release after >=250ms hold should stopTx');
+  assertEqual(r.actions, [], 'a 400ms press is a tap, not a hold -- must not stopTx');
+  assertEqual(state.transmitting, true, 'should remain transmitting after a relaxed tap');
+});
+
+test('hold 700ms -> startTx on down, stopTx on release', () => {
+  let state = freshActivatedState();
+
+  let r = pttPressReduce(state, { type: 'down', pointerId: 1 }, 0);
+  state = r.state;
+  assertEqual(r.actions, ['startTx'], 'down should startTx');
+
+  r = pttPressReduce(state, { type: 'up', pointerId: 1 }, 700);
+  state = r.state;
+  assertEqual(r.actions, ['stopTx'], 'release after >=600ms hold should stopTx');
   assertEqual(state.transmitting, false, 'should be off after a real hold-release');
 });
 
@@ -179,7 +197,7 @@ test('duplicate synthetic pointerdown during an active press (same pointerId, no
   assertEqual(state.transmitting, true, 'transmission state must be unaffected by the duplicate');
 
   // Real release should still work normally afterward.
-  r = pttPressReduce(state, { type: 'up', pointerId: 1 }, 400);
+  r = pttPressReduce(state, { type: 'up', pointerId: 1 }, 700);
   state = r.state;
   assertEqual(r.actions, ['stopTx'], 'release after the duplicate should still behave like a normal hold-release');
 });
@@ -190,7 +208,7 @@ test('pointercancel behaves like up', () => {
   let r = pttPressReduce(state, { type: 'down', pointerId: 1 }, 0);
   state = r.state;
 
-  r = pttPressReduce(state, { type: 'cancel', pointerId: 1 }, 400);
+  r = pttPressReduce(state, { type: 'cancel', pointerId: 1 }, 700);
   state = r.state;
   assertEqual(r.actions, ['stopTx'], 'pointercancel after a hold should stopTx just like pointerup');
   assertEqual(state.activePointerId, null, 'pointercancel should clear the active press like pointerup does');

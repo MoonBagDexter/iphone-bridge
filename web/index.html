@@ -2068,6 +2068,13 @@
     <!-- Which mode the next dictation runs through. Plain taps only. -->
     <div class="chip-row voice-mode-row" id="dictate-modes" hidden></div>
 
+    <!-- Fix-up keys: redo what the last dictation typed without touching the
+         PC. Select All then Bksp wipes the field for a clean restart. -->
+    <div class="nav-row">
+      <button id="dictate-ctrl-a" class="nav-btn nav-btn-edit" type="button">Select All</button>
+      <button id="dictate-backspace" class="nav-btn nav-btn-bksp" type="button">&#x232B; Bksp</button>
+    </div>
+
     <span class="ptt-state" id="dictate-state">tap to talk</span>
     <div class="dictate-btn-row">
       <button id="dictate-btn" class="ptt-btn dictate-btn" type="button">
