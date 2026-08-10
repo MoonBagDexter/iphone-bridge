@@ -4742,3 +4742,47 @@ function beginDictation() {
   pttPressState = { ...pttPressState, activated: true, transmitting: false };
   startTransmitting();
 }
+
+// ---- Viewport diagnostics ("Screen edges" in More, or open with #debug) ----
+// Overlays a border exactly where the page thinks the screen edges are, plus
+// every size the phone reports. Built to diagnose a dead band at the bottom
+// of the iPhone 17 Pro home-screen install: one screenshot shows whether the
+// band is inside the page's viewport (our CSS would be at fault) or outside
+// it (iOS is withholding those pixels). Tap the overlay to dismiss.
+let debugNodes = null;
+function toggleViewportDebug() {
+  if (debugNodes) {
+    debugNodes.forEach((n) => n.remove());
+    debugNodes = null;
+    return;
+  }
+  const frame = document.createElement('div');
+  frame.style.cssText =
+    'position:fixed;inset:0;border:3px solid #f39c2c;z-index:9998;';
+  const readout = document.createElement('pre');
+  readout.style.cssText =
+    'position:fixed;left:50%;bottom:25%;transform:translateX(-50%);z-index:9999;' +
+    'background:#000c;color:#7CFC9A;padding:0.7rem 1rem;border-radius:12px;' +
+    'font:12px/1.6 ui-monospace,monospace;pointer-events:none;';
+  const update = () => {
+    readout.textContent = [
+      `standalone: ${window.matchMedia('(display-mode: standalone)').matches}`,
+      `screen:     ${screen.width} x ${screen.height}`,
+      `inner:      ${window.innerWidth} x ${window.innerHeight}`,
+      `visualVp:   ${Math.round(visualViewport.width)} x ${Math.round(visualViewport.height)}`,
+      `body:       ${Math.round(document.body.getBoundingClientRect().height)}`,
+      `dpr:        ${devicePixelRatio}`,
+    ].join('\n');
+  };
+  update();
+  visualViewport.addEventListener('resize', update);
+  window.addEventListener('resize', update);
+  frame.addEventListener('pointerdown', toggleViewportDebug);
+  document.body.append(frame, readout);
+  debugNodes = [frame, readout];
+}
+document.getElementById('debug-btn').addEventListener('click', () => {
+  closeMoreSheet();
+  toggleViewportDebug();
+});
+if (location.hash === '#debug') toggleViewportDebug();
