@@ -92,7 +92,8 @@ async fn handle_mic(socket: WebSocket, state: AppState) {
         match msg {
             Message::Binary(bytes) => {
                 // While dictating, the audio is ours -- don't also push it to
-                // the virtual cable, or SuperWhisper would hear the same words.
+                // the virtual cable, or the PC dictation app (Wispr Flow)
+                // would hear the same words.
                 {
                     let mut buf = state.dictation.lock().await;
                     if buf.is_active() {
@@ -108,17 +109,19 @@ async fn handle_mic(socket: WebSocket, state: AppState) {
             }
             Message::Text(s) => match s.as_str() {
                 "ptt:start" => {
-                    eprintln!("[ws-mic] ptt:start -- tapping Alt");
-                    keyboard::tap_alt();
+                    let hotkey = state.config.read().unwrap().ptt_hotkey.clone();
+                    eprintln!("[ws-mic] ptt:start -- pressing {hotkey:?}");
+                    keyboard::tap_hotkey(&hotkey);
                 }
                 "ptt:stop" => {
-                    eprintln!("[ws-mic] ptt:stop -- waiting for drain ack before tapping Alt");
+                    let hotkey = state.config.read().unwrap().ptt_hotkey.clone();
+                    eprintln!("[ws-mic] ptt:stop -- waiting for drain ack before pressing {hotkey:?}");
                     let (ack_tx, ack_rx) = oneshot::channel();
                     if state.mic_tx.send(MicMsg::Drain(ack_tx)).await.is_err() {
                         eprintln!(
-                            "[ws-mic] render thread channel closed during drain; tapping Alt anyway"
+                            "[ws-mic] render thread channel closed during drain; pressing hotkey anyway"
                         );
-                        keyboard::tap_alt();
+                        keyboard::tap_hotkey(&hotkey);
                         continue;
                     }
                     // Don't block the receiver loop while WASAPI drains -- spawn.
@@ -130,20 +133,20 @@ async fn handle_mic(socket: WebSocket, state: AppState) {
                         .await
                         {
                             Ok(Ok(())) => {
-                                eprintln!("[ws-mic] drain ack received, tapping Alt");
+                                eprintln!("[ws-mic] drain ack received, pressing hotkey");
                             }
                             Ok(Err(_)) => {
                                 eprintln!(
-                                    "[ws-mic] drain ack channel dropped, tapping Alt anyway"
+                                    "[ws-mic] drain ack channel dropped, pressing hotkey anyway"
                                 );
                             }
                             Err(_) => {
                                 eprintln!(
-                                    "[ws-mic] drain ack timeout (3s), tapping Alt anyway"
+                                    "[ws-mic] drain ack timeout (3s), pressing hotkey anyway"
                                 );
                             }
                         }
-                        keyboard::tap_alt();
+                        keyboard::tap_hotkey(&hotkey);
                     });
                 }
                 "dictate:start" => {

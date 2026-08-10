@@ -70,7 +70,6 @@ fn tap_win_ctrl_chord(vk: VIRTUAL_KEY) {
     send_inputs(&mut inputs);
 }
 
-pub fn tap_alt() { tap_vk(VK_RMENU as VIRTUAL_KEY, true); }
 pub fn tap_arrow_up() { tap_vk(VK_UP as VIRTUAL_KEY, true); }
 pub fn tap_arrow_down() { tap_vk(VK_DOWN as VIRTUAL_KEY, true); }
 pub fn tap_arrow_left() { tap_vk(VK_LEFT as VIRTUAL_KEY, true); }
@@ -199,6 +198,86 @@ pub fn type_text(text: &str) {
     send_inputs(&mut inputs);
 }
 
+// ---- Configurable PTT hotkey ----------------------------------------------
+// The PTT view triggers whichever dictation app the user runs on the PC by
+// pressing that app's global hands-free toggle (tap to start, tap to stop).
+// The key lives in config.json (`ptt_hotkey`) so switching dictation apps --
+// or rebinding inside one -- never needs a rebuild.
+
+/// What a fresh config gets: Right Alt, the owner's hands-free binding in
+/// Wispr Flow (and formerly SuperWhisper's hotkey). Wispr Flow's own factory
+/// default is "ctrl+win+space", which the parser also accepts.
+pub const DEFAULT_PTT_HOTKEY: &str = "right_alt";
+
+/// One key of a parsed chord: virtual-key code plus whether the physical scan
+/// code is 0xE0-prefixed (Right Alt, arrows...), which low-level hooks check.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChordKey {
+    pub vk: u16,
+    pub extended: bool,
+}
+
+/// Parse "ctrl+win+space" style text into a chord, in press order.
+/// Case/whitespace-insensitive. Returns None for anything unrecognized so the
+/// caller can fall back to the default rather than silently pressing wrong keys.
+pub fn parse_hotkey(s: &str) -> Option<Vec<ChordKey>> {
+    let plain = |vk: u16| Some(ChordKey { vk, extended: false });
+    let tokens: Vec<String> = s.split('+').map(|t| t.trim().to_ascii_lowercase()).collect();
+    if tokens.is_empty() || tokens.iter().any(|t| t.is_empty()) {
+        return None;
+    }
+    let mut chord = Vec::with_capacity(tokens.len());
+    for t in &tokens {
+        let key = match t.as_str() {
+            "ctrl" | "control" => plain(VK_CONTROL),
+            "win" | "windows" | "super" => plain(VK_LWIN),
+            "alt" => plain(VK_MENU),
+            "shift" => plain(VK_SHIFT),
+            // Right Alt is what SuperWhisper listened for; keep it available
+            // so old setups can put "right_alt" in config.json and carry on.
+            "right_alt" | "ralt" | "altgr" => Some(ChordKey { vk: VK_RMENU, extended: true }),
+            "space" | "spacebar" => plain(VK_SPACE),
+            "enter" | "return" => plain(VK_RETURN),
+            "tab" => plain(VK_TAB),
+            "esc" | "escape" => plain(VK_ESCAPE),
+            t if t.len() == 1 && t.as_bytes()[0].is_ascii_alphanumeric() => {
+                // VK codes for A-Z and 0-9 equal their ASCII upper-case codepoints.
+                plain(t.as_bytes()[0].to_ascii_uppercase() as u16)
+            }
+            t if t.starts_with('f') && t[1..].parse::<u8>().is_ok_and(|n| (1..=24).contains(&n)) => {
+                plain(0x70 + (t[1..].parse::<u8>().unwrap() as u16 - 1)) // VK_F1 = 0x70
+            }
+            _ => None,
+        };
+        chord.push(key?);
+    }
+    Some(chord)
+}
+
+/// Press a configured chord: keys down in order, up in reverse -- the same
+/// shape a human makes, which is what global hotkey hooks expect. Falls back
+/// to `DEFAULT_PTT_HOTKEY` (with a log) when the configured string is invalid.
+pub fn tap_hotkey(s: &str) {
+    let chord = match parse_hotkey(s) {
+        Some(c) => c,
+        None => {
+            crate::logging::log_both(&format!(
+                "[keyboard] ptt_hotkey {s:?} in config.json is invalid; using default {DEFAULT_PTT_HOTKEY:?}"
+            ));
+            parse_hotkey(DEFAULT_PTT_HOTKEY).expect("default hotkey must parse; see tests")
+        }
+    };
+    let base = |k: &ChordKey| if k.extended { KEYEVENTF_EXTENDEDKEY } else { 0 };
+    let mut inputs: Vec<INPUT> = Vec::with_capacity(chord.len() * 2);
+    for k in &chord {
+        inputs.push(make_kbd(k.vk, base(k)));
+    }
+    for k in chord.iter().rev() {
+        inputs.push(make_kbd(k.vk, base(k) | KEYEVENTF_KEYUP));
+    }
+    send_inputs(&mut inputs);
+}
+
 pub fn type_btw() { type_text("/btw "); }
 pub fn type_push() {
     type_text("push");
@@ -211,4 +290,72 @@ pub fn type_clear() {
 pub fn type_resume() {
     type_text("/resume");
     tap_enter();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Raw VK values so the tests don't just mirror the implementation's
+    // constant imports: Ctrl=0x11, Win=0x5B, Alt=0x12, Shift=0x10,
+    // RightAlt=0xA5, Space=0x20.
+    fn vks(chord: &[ChordKey]) -> Vec<u16> {
+        chord.iter().map(|k| k.vk).collect()
+    }
+
+    #[test]
+    fn parses_the_wispr_flow_default_chord() {
+        let chord = parse_hotkey("ctrl+win+space").expect("default chord must parse");
+        assert_eq!(vks(&chord), vec![0x11, 0x5B, 0x20]);
+        assert!(
+            chord.iter().all(|k| !k.extended),
+            "none of ctrl/win/space are extended keys"
+        );
+    }
+
+    #[test]
+    fn parses_the_legacy_superwhisper_right_alt() {
+        let chord = parse_hotkey("right_alt").expect("right_alt must parse");
+        assert_eq!(vks(&chord), vec![0xA5]);
+        assert!(chord[0].extended, "right alt is an extended key");
+    }
+
+    #[test]
+    fn is_case_and_whitespace_insensitive() {
+        let a = parse_hotkey("ctrl+win+space").unwrap();
+        let b = parse_hotkey("  Ctrl + WIN +  Space ").unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn parses_letters_and_function_keys() {
+        let chord = parse_hotkey("ctrl+alt+f7").expect("f-keys must parse");
+        assert_eq!(vks(&chord), vec![0x11, 0x12, 0x76]); // F7 = 0x70 + 6
+        let chord = parse_hotkey("win+j").expect("letters must parse");
+        assert_eq!(vks(&chord), vec![0x5B, b'J' as u16]);
+    }
+
+    #[test]
+    fn rejects_garbage_instead_of_guessing() {
+        assert_eq!(parse_hotkey(""), None, "empty string");
+        assert_eq!(parse_hotkey("   "), None, "blank string");
+        assert_eq!(parse_hotkey("ctrl+"), None, "trailing plus");
+        assert_eq!(parse_hotkey("banana"), None, "unknown key name");
+        assert_eq!(parse_hotkey("ctrl+banana"), None, "unknown key in a chord");
+    }
+
+    #[test]
+    fn accepts_common_aliases() {
+        assert_eq!(parse_hotkey("control+windows+spacebar"), parse_hotkey("ctrl+win+space"));
+        assert_eq!(parse_hotkey("ralt"), parse_hotkey("right_alt"));
+        assert_eq!(parse_hotkey("altgr"), parse_hotkey("right_alt"));
+    }
+
+    #[test]
+    fn the_shipped_default_always_parses() {
+        assert!(
+            parse_hotkey(DEFAULT_PTT_HOTKEY).is_some(),
+            "DEFAULT_PTT_HOTKEY must never be unparsable -- it is the fallback"
+        );
+    }
 }

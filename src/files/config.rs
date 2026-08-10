@@ -50,6 +50,15 @@ pub struct Config {
     /// Lives here so there is a single config file; see `crate::voice::settings`.
     #[serde(default)]
     pub voice: crate::voice::settings::VoiceSettings,
+    /// The global hotkey the PTT view presses to toggle the PC dictation app
+    /// (Wispr Flow's hands-free toggle by default). See `keyboard::parse_hotkey`
+    /// for the accepted syntax.
+    #[serde(default = "default_ptt_hotkey")]
+    pub ptt_hotkey: String,
+}
+
+fn default_ptt_hotkey() -> String {
+    crate::keyboard::DEFAULT_PTT_HOTKEY.to_string()
 }
 
 impl Config {
@@ -91,6 +100,7 @@ impl Config {
             ],
             spawned_dirs: Vec::new(),
             voice: crate::voice::settings::VoiceSettings::default(),
+            ptt_hotkey: default_ptt_hotkey(),
         }
     }
 
@@ -293,6 +303,22 @@ mod tests {
         assert!(cfg.has_spawned_dir(r"C:\Users\thedi\proj"));
         assert!(cfg.has_spawned_dir(r"C:\USERS\THEDI\PROJ"));
         assert!(!cfg.has_spawned_dir(r"C:\Users\thedi\other"));
+    }
+
+    #[test]
+    fn legacy_config_without_ptt_hotkey_gets_the_default() {
+        let legacy = r#"{ "pin": "123456", "scope": "roots", "roots": [] }"#;
+        let cfg: Config = serde_json::from_str(legacy).expect("legacy config must load");
+        assert_eq!(cfg.ptt_hotkey, "right_alt");
+    }
+
+    #[test]
+    fn custom_ptt_hotkey_roundtrips() {
+        let mut cfg = Config::first_run();
+        cfg.ptt_hotkey = "ctrl+alt+f7".to_string();
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: Config = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.ptt_hotkey, "ctrl+alt+f7");
     }
 
     #[test]
