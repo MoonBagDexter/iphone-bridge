@@ -877,6 +877,9 @@ let pttStartPending = false;
 const dictateBtn = document.getElementById('dictate-btn');
 const dictateLabelEl = document.getElementById('dictate-label');
 const dictateStateEl = document.getElementById('dictate-state');
+const trackpadDictateBtn = document.getElementById('trackpad-dictate');
+const trackpadDictateState = document.getElementById('trackpad-dictate-state');
+const trackpad = mountTrackpad(document.getElementById('trackpad-surface'), document.getElementById('trackpad-connection'));
 
 // Both modes drive the same reducer and socket, so drive both button faces
 // too. Only one view is ever visible, so writing to both is free.
@@ -891,6 +894,12 @@ function setPttUi(label, stateMsg, cls /* 'on' | 'draining' | null */) {
   stateEl.textContent = stateMsg;
   btn.classList.toggle('on', cls === 'on');
   btn.classList.toggle('draining', cls === 'draining');
+  if (inDictate) {
+    trackpadDictateBtn.textContent = label === 'Activate' ? 'Dictate' : label;
+    trackpadDictateState.textContent = stateMsg;
+    trackpadDictateBtn.classList.toggle('on', cls === 'on');
+    trackpadDictateBtn.classList.toggle('draining', cls === 'draining');
+  }
 }
 
 // --- dictate-ui-pure (pure; tested by tests/dictate-ui.test.mjs) ---
@@ -1091,6 +1100,9 @@ function teardownPtt() {
   pttStartPending = false;
   teardownTalkingMic();
   if (pttWs) {
+    pttWs.onclose = null;
+    pttWs.onmessage = null;
+    pttWs.onopen = null;
     try { pttWs.close(); } catch (_) {}
     pttWs = null;
   }
@@ -1380,6 +1392,7 @@ const dictateTextEl = document.getElementById('dictate-text');
 function showDictateResult(text) {
   if (!text) { dictateResultEl.hidden = true; return; }
   dictateTextEl.textContent = text;
+  dictateTextEl.scrollTop = 0;
   dictateResultEl.hidden = false;
 }
 
@@ -1453,7 +1466,7 @@ document.addEventListener('pointerdown', (e) => {
 // scroll containers, which must keep native scrolling.
 document.addEventListener('touchmove', (e) => {
   if (e.target instanceof Element &&
-      e.target.closest('.files-scroll, .chip-row, .breadcrumb-bar, .peek-body, .viewer-body, .git-list')) return;
+      e.target.closest('.files-scroll, .chip-row, .breadcrumb-bar, .peek-body, .viewer-body, .git-list, .dictate-scroll, .dictate-text')) return;
   if (e.cancelable) e.preventDefault();
 }, { passive: false });
 
@@ -1515,6 +1528,19 @@ document.getElementById('key-clear').addEventListener('click', () => sendKey('cl
 // wiped and redone from the phone. Same /mic transport as the PTT nav keys,
 // which is open in Dictate mode too (TALK_MODES share the socket).
 document.getElementById('dictate-ctrl-a').addEventListener('click', () => sendKey('ctrl-a'));
+document.getElementById('trackpad-select-all').addEventListener('click', () => sendKeyNoQueue('ctrl-a'));
+bindHoldRepeat(document.getElementById('trackpad-backspace'), 'backspace');
+let trackpadActivating = false;
+trackpadDictateBtn.addEventListener('click', async () => {
+  if (trackpadActivating) return;
+  if (pttTransmitting) { stopTransmitting(); return; }
+  trackpadActivating = true;
+  try {
+    if (!pttActivated) await activatePtt();
+    if (currentMode === 'trackpad' && pttActivated) startTransmitting();
+  } catch (error) { toast(friendlyError(error)); }
+  finally { trackpadActivating = false; }
+});
 bindHoldRepeat(document.getElementById('dictate-backspace'), 'backspace');
 
 // ---- Files tab --------------------------------------------------------
@@ -4532,10 +4558,13 @@ const viewBridge = document.getElementById('view-bridge');
 const viewPtt = document.getElementById('view-ptt');
 const viewFiles = document.getElementById('view-files');
 const viewDictate = document.getElementById('view-dictate');
+const viewTrackpad = document.getElementById('view-trackpad');
+const modeTrackpadBtn = document.getElementById('mode-trackpad');
+let currentMode = 'bridge';
 
 // PTT and Dictate share all their machinery and differ only in what the
 // server does with the audio, so they're one mode internally.
-const TALK_MODES = ['ptt', 'dictate'];
+const TALK_MODES = ['ptt', 'dictate', 'trackpad'];
 
 const MODE_KEY = 'iphone-bridge-mode';
 
@@ -4549,10 +4578,11 @@ let pendingAutoActivate = false;
 let autoStartPending = false;
 
 async function setMode(mode) {
+  if (currentMode !== mode) trackpad.exit();
   // Tear down whichever mode we're leaving. Each branch below only touches
   // resources for the mode being entered/left -- Bridge/PTT teardown logic
   // is untouched from before Files existed.
-  if (!TALK_MODES.includes(mode) && pttModeActive) {
+  if (currentMode !== mode && pttModeActive) {
     pttModeActive = false;
     pttWsBackoff.reset();
     pendingKeys.length = 0;
@@ -4574,6 +4604,10 @@ async function setMode(mode) {
   viewPtt.hidden = mode !== 'ptt';
   viewFiles.hidden = mode !== 'files';
   viewDictate.hidden = mode !== 'dictate';
+  viewTrackpad.hidden = mode !== 'trackpad';
+  modeTrackpadBtn.classList.toggle('active', mode === 'trackpad');
+  currentMode = mode;
+  if (mode === 'trackpad') trackpad.enter();
   viewSettings.hidden = mode !== 'settings';
   viewHistory.hidden = mode !== 'history';
   modeBridgeBtn.classList.toggle('active', mode === 'bridge');
@@ -4587,7 +4621,7 @@ async function setMode(mode) {
   if (TALK_MODES.includes(mode)) {
     // Decides whether the server routes audio to the virtual cable or keeps
     // it for whisper. Must be set before any start/stop frame goes out.
-    talkProtocol = mode;
+    talkProtocol = mode === 'trackpad' ? 'dictate' : mode;
   }
 
   if (TALK_MODES.includes(mode)) {
@@ -4600,7 +4634,10 @@ async function setMode(mode) {
     // pill being tapped), iOS allows the mic-permission prompt to appear
     // immediately. If we got here from localStorage restore on page load
     // (no gesture), defer to the first pointer event.
-    if (!pttActivated) {
+    if (mode === 'trackpad') {
+      pendingAutoActivate = false;
+      setPttUi('Dictate', 'tap to dictate', null);
+    } else if (!pttActivated) {
       activatePtt()
         .then(() => { if (mode === 'dictate') beginDictation(); })
         .catch(() => { pendingAutoActivate = true; });
@@ -4624,6 +4661,7 @@ modeBridgeBtn.addEventListener('click', () => setMode('bridge'));
 modePttBtn.addEventListener('click', () => setMode('ptt'));
 modeFilesBtn.addEventListener('click', () => setMode('files'));
 modeDictateBtn.addEventListener('click', () => setMode('dictate'));
+modeTrackpadBtn.addEventListener('click', () => setMode('trackpad'));
 // History/Settings live in the More sheet: pick one, the sheet closes behind it.
 modeHistoryBtn.addEventListener('click', () => { closeMoreSheet(); setMode('history'); });
 modeSettingsBtn.addEventListener('click', () => { closeMoreSheet(); setMode('settings'); });
@@ -4658,7 +4696,7 @@ document.addEventListener('pointerdown', () => {
 // have to tap Activate after coming back.
 
 function recoverPtt() {
-  if (!pttModeActive || (viewPtt.hidden && viewDictate.hidden)) return;
+  if (!pttModeActive || (viewPtt.hidden && viewDictate.hidden && viewTrackpad.hidden)) return;
   // Wake the audio context if iOS suspended it.
   if (pttCtx && pttCtx.state === 'suspended') {
     pttCtx.resume().catch(() => {});
@@ -4713,6 +4751,7 @@ window.addEventListener('online', () => { recoverPtt(); recoverBridge(); recover
 const HASH_MODES = {
   '#dictate': 'dictate', '#ptt': 'ptt', '#files': 'files', '#bridge': 'bridge',
   '#settings': 'settings', '#history': 'history',
+  '#trackpad': 'trackpad',
 };
 try {
   const fromHash = HASH_MODES[location.hash];
@@ -4723,7 +4762,7 @@ try {
     if (fromHash === 'dictate') autoStartDictation();
   } else {
     const saved = localStorage.getItem(MODE_KEY);
-    if (['ptt', 'files', 'dictate', 'settings', 'history'].includes(saved)) setMode(saved);
+    if (['ptt', 'files', 'dictate', 'trackpad', 'settings', 'history'].includes(saved)) setMode(saved);
   }
 } catch (_) { /* ignore */ }
 

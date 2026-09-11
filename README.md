@@ -7,6 +7,16 @@ Use your iPhone (and any headphones connected to it — AirPods, wired, etc.) as
 - Streams your PC's audio output to a web page on the iPhone (you hear it through whatever's plugged into the phone).
 - Streams the iPhone's microphone back to Windows as a virtual mic that any app (Discord, Zoom, games, etc.) can select.
 - Both directions are independent — you can run just audio, just mic, or both at once.
+- The Trackpad tab controls the PC cursor without turning on the microphone. Its top row has Dictate, Select All, and hold-to-repeat Backspace.
+
+## Trackpad gestures
+
+- Slide one finger to move; slow strokes are precise and quick strokes travel farther.
+- Tap to click. Tap twice for a double-click, or tap then hold the second touch and slide to drag.
+- Slide two fingers to scroll in either direction; tap with two fingers for right-click.
+- Lifting your fingers, leaving the tab, or losing the connection releases a drag. Motion is never queued for replay after a connection stall.
+
+Open `/#trackpad` to go straight to this tab. Dictate uses the same transcription mode as the Dictate tab; the microphone is requested only when you press Dictate.
 
 ## Requirements
 

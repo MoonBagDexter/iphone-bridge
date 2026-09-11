@@ -34,6 +34,7 @@ pub struct AppState {
 
 const INDEX_HTML: &str = include_str!("../../web/index.html");
 const APP_JS: &str = include_str!("../../web/app.js");
+const TRACKPAD_JS: &str = include_str!("../../web/trackpad.js");
 const WORKLET_JS: &str = include_str!("../../web/worklet.js");
 const MIC_WORKLET_JS: &str = include_str!("../../web/mic-worklet.js");
 
@@ -272,6 +273,8 @@ fn router(
         .route("/", get(index))
         .route("/api/viewport", post(viewport_report))
         .route("/app.js", get(app_js))
+        .route("/trackpad.js", get(|| async { static_response("application/javascript", TRACKPAD_JS) }))
+        .route("/trackpad", get(crate::trackpad::upgrade))
         .route("/icon-180.png", get(icon_180))
         .route("/icon-192.png", get(icon_192))
         .route("/icon-512.png", get(icon_512))
