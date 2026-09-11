@@ -83,14 +83,21 @@ async fn handle(mut socket: WebSocket) {
         return;
     };
     let mut button = Button::default();
+    let mut waiting_for_pong = false;
     if socket.send(Message::Text(r#"{"type":"ready"}"#.into())).await.is_err() { return; }
     loop {
         match tokio::time::timeout(Duration::from_secs(2), socket.next()).await {
             Ok(Some(Ok(Message::Text(text)))) => {
+                waiting_for_pong = false;
                 if let Some(cmd) = parse(&text) { button.apply(cmd); } else { break; }
             }
-            Ok(Some(Ok(Message::Ping(_)))) | Ok(Some(Ok(Message::Pong(_)))) => {},
-            Err(_) if !button.held => continue,
+            Ok(Some(Ok(Message::Ping(_)))) | Ok(Some(Ok(Message::Pong(_)))) => { waiting_for_pong = false; },
+            Err(_) if !button.held && !waiting_for_pong => {
+                // Browser WebSockets answer protocol pings even while idle. A lost
+                // phone must not retain the exclusive controller slot indefinitely.
+                if socket.send(Message::Ping(Default::default())).await.is_err() { break; }
+                waiting_for_pong = true;
+            }
             // A suspended phone or broken connection cannot leave Windows dragging.
             _ => break,
         }
