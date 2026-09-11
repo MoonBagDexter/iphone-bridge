@@ -22,6 +22,10 @@ enum Command {
 fn parse(text: &str) -> Option<Command> {
     if text.len() > 160 { return None; }
     let cmd: Command = serde_json::from_str(text).ok()?;
+    // Serde's internally tagged unit variants otherwise ignore extra fields.
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    let expected_fields = match &cmd { Command::Move { .. } | Command::Wheel { .. } => 3, _ => 1 };
+    if value.as_object()?.len() != expected_fields { return None; }
     match cmd {
         Command::Move { x, y } | Command::Wheel { x, y }
             if !(-2048..=2048).contains(&x) || !(-2048..=2048).contains(&y) => None,
