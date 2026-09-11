@@ -4578,6 +4578,7 @@ let pendingAutoActivate = false;
 let autoStartPending = false;
 
 async function setMode(mode) {
+  if (mode === currentMode) return;
   if (currentMode !== mode) trackpad.exit();
   // Tear down whichever mode we're leaving. Each branch below only touches
   // resources for the mode being entered/left -- Bridge/PTT teardown logic
