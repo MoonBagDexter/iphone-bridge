@@ -1,0 +1,28 @@
+name: Windows release
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      CARGO_TARGET_DIR: D:\cargo-builds\iphone-bridge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test browser logic
+        run: node --test tests/*.test.mjs
+      - name: Test Windows logic
+        run: cargo test --locked
+      - name: Build release
+        run: cargo build --release --locked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iphone-bridge-windows
+          path: D:\cargo-builds\iphone-bridge\release\iphone-bridge.exe
+          if-no-files-found: error
